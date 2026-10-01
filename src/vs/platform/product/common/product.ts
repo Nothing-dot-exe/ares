@@ -43,8 +43,8 @@ else if (globalThis._VSCODE_PRODUCT_JSON && globalThis._VSCODE_PACKAGE_JSON) {
 	// Running out of sources
 	if (env['VSCODE_DEV']) {
 		Object.assign(product, {
-			nameShort: `${product.nameShort} Dev`,
-			nameLong: `${product.nameLong} Dev`,
+			nameShort: product.nameShort ?? 'Ares',
+			nameLong: product.nameLong ?? 'Ares IDE',
 			dataFolderName: `${product.dataFolderName}-dev`,
 			serverDataFolderName: product.serverDataFolderName ? `${product.serverDataFolderName}-dev` : undefined
 		});
@@ -77,10 +77,10 @@ else {
 	// Running out of sources
 	if (Object.keys(product).length === 0) {
 		Object.assign(product, {
-			version: '1.104.0-dev',
-			nameShort: 'Code - OSS Dev',
-			nameLong: 'Code - OSS Dev',
-			applicationName: 'code-oss',
+			version: '1.141.0-dev',
+			nameShort: 'Ares',
+			nameLong: 'Ares IDE',
+			applicationName: 'ares',
 			dataFolderName: '.vscode-oss',
 			urlProtocol: 'code-oss',
 			reportIssueUrl: 'https://github.com/microsoft/vscode/issues/new',

@@ -115,150 +115,15 @@ export class ChatSetupController extends Disposable {
 			return undefined;
 		}
 
-		this.context.suspend();  // reduces flicker
-
-		let success: ChatSetupResultValue = false;
-		try {
-			let entitlement: ChatEntitlement | undefined;
-
-			let signIn: boolean;
-			if (options.forceSignIn) {
-				signIn = true; // forced to sign in
-			} else if (this.context.state.entitlement === ChatEntitlement.Unknown) {
-				if (options.forceAnonymous) {
-					signIn = false; // forced to anonymous without sign in
-				} else {
-					signIn = true; // sign in since we are signed out
-				}
-			} else {
-				signIn = false; // already signed in
-			}
-
-			if (signIn) {
-				this.setStep(ChatSetupStep.SigningIn);
-				const result = await this.signIn(options);
-				if (!result) {
-					return undefined;
-				}
-				if (!result.defaultAccount) {
-					const provider = options.useSocialProvider ?? (options.useEnterpriseProvider ? defaultChat.provider.enterprise.id : defaultChat.provider.default.id);
-					this.telemetryService.publicLog2<InstallChatEvent, InstallChatClassification>('commandCenter.chatInstall', { installResult: 'failedNotSignedIn', installDuration: watch.elapsed(), signUpErrorCode: undefined, provider });
-					return undefined; // treat as cancelled because signing in already triggers an error dialog
-				}
-
-				entitlement = result.entitlement;
-			}
-
-			if (options.cancellationToken?.isCancellationRequested) {
-				return undefined;
-			}
-
-			// Await Install
-			this.setStep(ChatSetupStep.Installing);
-			success = await this.install(entitlement ?? this.context.state.entitlement, watch, options);
-		} finally {
-			this.setStep(ChatSetupStep.Initial);
-			this.context.resume();
-		}
-
-		return success;
+		this.context.update({ completed: true });
+		return true;
 	}
 
 	private async signIn(options: IChatSetupControllerOptions): Promise<{ defaultAccount: IDefaultAccount | undefined; entitlement: ChatEntitlement | undefined } | undefined> {
-		const authExtensionReEnabled = await maybeEnableAuthExtension(this.extensionsWorkbenchService, this.logService);
-		if (authExtensionReEnabled) {
-			refreshTokens(this.commandService);
-		}
-		if (options.cancellationToken?.isCancellationRequested) {
-			return undefined;
-		}
-
-		let entitlements;
-		let defaultAccount;
-		let signInError: Error | undefined;
-		try {
-			const result = await raceCancellation(this.requests.signIn(options), options.cancellationToken ?? CancellationToken.None);
-			if (!result) {
-				return undefined;
-			}
-			({ defaultAccount, entitlements } = result);
-		} catch (e) {
-			this.logService.error(`[chat setup] signIn: error ${e}`);
-			signInError = e instanceof Error ? e : new Error(String(e));
-		}
-
-		if (options.cancellationToken?.isCancellationRequested) {
-			return undefined;
-		}
-
-		if (!defaultAccount && !this.lifecycleService.willShutdown) {
-			const { confirmed } = await this.dialogService.confirm({
-				type: Severity.Error,
-				message: localize('unknownSignInError', "Failed to sign in to {0}. Would you like to try again?", this.defaultAccountService.getDefaultAccountAuthenticationProvider().name),
-				detail: localize('unknownSignInErrorDetail', "You must be signed in to use AI features."),
-				primaryButton: localize('retry', "Retry")
-			});
-
-			if (confirmed) {
-				return this.signIn(options);
-			}
-		}
-		if (signInError) {
-			throw new ChatSetupError(signInError, true);
-		}
-
-		return { defaultAccount, entitlement: entitlements?.entitlement };
+		return { defaultAccount: undefined, entitlement: ChatEntitlement.Pro };
 	}
 
 	private async install(entitlement: ChatEntitlement, watch: StopWatch, options: IChatSetupControllerOptions): Promise<ChatSetupResultValue> {
-		const wasRunning = this.context.state.completed && !this.context.state.disabled;
-		let signUpResult: boolean | { errorCode: number } | undefined = undefined;
-
-		let provider: string;
-		if (options.forceAnonymous && entitlement === ChatEntitlement.Unknown) {
-			provider = 'anonymous';
-		} else {
-			provider = options.useSocialProvider ?? (options.useEnterpriseProvider ? defaultChat.provider.enterprise.id : defaultChat.provider.default.id);
-		}
-
-		try {
-			if (
-				!options.forceAnonymous &&						// User is not asking for anonymous access
-				entitlement !== ChatEntitlement.Free &&			// User is not signed up to Copilot Free
-				!isProUser(entitlement) &&						// User is not signed up for a Copilot subscription
-				entitlement !== ChatEntitlement.Unavailable		// User is eligible for Copilot Free
-			) {
-				signUpResult = await this.requests.signUpFree();
-
-				if (isUndefined(signUpResult)) {
-					this.telemetryService.publicLog2<InstallChatEvent, InstallChatClassification>('commandCenter.chatInstall', { installResult: 'failedNoSession', installDuration: watch.elapsed(), signUpErrorCode: undefined, provider });
-					return false; // unexpected
-				}
-
-				if (typeof signUpResult !== 'boolean' /* error */) {
-					this.telemetryService.publicLog2<InstallChatEvent, InstallChatClassification>('commandCenter.chatInstall', { installResult: 'failedSignUp', installDuration: watch.elapsed(), signUpErrorCode: signUpResult.errorCode, provider });
-				}
-			}
-
-			await this.doInstallWithRetry();
-		} catch (error) {
-			this.logService.error(`[chat setup] install: error ${error}`);
-			this.telemetryService.publicLog2<InstallChatEvent, InstallChatClassification>('commandCenter.chatInstall', { installResult: isCancellationError(error) ? 'cancelled' : 'failedInstall', installDuration: watch.elapsed(), signUpErrorCode: undefined, provider });
-			return false;
-		}
-
-		if (typeof signUpResult === 'boolean' /* not an error case */ || typeof signUpResult === 'undefined' /* already signed up */) {
-			this.telemetryService.publicLog2<InstallChatEvent, InstallChatClassification>('commandCenter.chatInstall', { installResult: wasRunning && !signUpResult ? 'alreadyInstalled' : 'installed', installDuration: watch.elapsed(), signUpErrorCode: undefined, provider });
-		}
-
-		if (wasRunning) {
-			// We always trigger refresh of tokens to help the user
-			// get out of authentication issues that can happen when
-			// for example the sign-up ran after the extension tried
-			// to use the authentication information to mint a token
-			refreshTokens(this.commandService);
-		}
-
 		return true;
 	}
 

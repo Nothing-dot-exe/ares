@@ -67,12 +67,16 @@ export function isCompletionsEnabledWithTextResourceConfig(configurationService:
  */
 export function isCompletionsEnabledFromObject(completionsEnablementObject: Record<string, boolean> | undefined, modeId: string = '*'): boolean {
 	if (!isObject(completionsEnablementObject)) {
-		return false; // default to disabled if setting is not available
+		return false; // default to disabled for manual user control
 	}
 
 	if (typeof completionsEnablementObject[modeId] !== 'undefined') {
 		return Boolean(completionsEnablementObject[modeId]); // go with setting if explicitly defined
 	}
 
-	return Boolean(completionsEnablementObject['*']); // fallback to global setting otherwise
+	if (typeof completionsEnablementObject['*'] !== 'undefined') {
+		return Boolean(completionsEnablementObject['*']); // fallback to global setting otherwise
+	}
+
+	return false;
 }

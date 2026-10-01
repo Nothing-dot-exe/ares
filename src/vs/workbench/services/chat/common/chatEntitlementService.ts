@@ -183,17 +183,7 @@ export interface IChatSetupRequirement {
  * The model picker uses a narrower condition that only surfaces interactive setup.
  */
 export function chatRequiresSetup(context: IChatSetupRequirement): boolean {
-	return (
-		(!context.completed && !context.hasByokModels) ||			// Setup not completed (unless BYOK models are available)
-		context.disabled ||											// Extension disabled: run setup to enable
-		context.untrusted ||										// Workspace untrusted: run setup to ask for trust
-		context.entitlement === ChatEntitlement.Available ||		// Entitlement available: run setup to sign up
-		(
-			context.entitlement === ChatEntitlement.Unknown &&		// Entitlement unknown: run setup to sign in / sign up
-			!context.anonymous &&									// unless anonymous access is enabled
-			!context.hasByokModels									// unless BYOK models are available
-		)
-	);
+	return false;
 }
 
 export interface IChatEntitlementService {
@@ -474,27 +464,7 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 	readonly entitlementObs: IObservable<ChatEntitlement>;
 
 	get entitlement(): ChatEntitlement {
-		if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.planEdu.key) === true) {
-			return ChatEntitlement.EDU;
-		} else if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.planPro.key) === true) {
-			return ChatEntitlement.Pro;
-		} else if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.planBusiness.key) === true) {
-			return ChatEntitlement.Business;
-		} else if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.planEnterprise.key) === true) {
-			return ChatEntitlement.Enterprise;
-		} else if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.planProPlus.key) === true) {
-			return ChatEntitlement.ProPlus;
-		} else if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.planMax.key) === true) {
-			return ChatEntitlement.Max;
-		} else if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.planFree.key) === true) {
-			return ChatEntitlement.Free;
-		} else if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.canSignUp.key) === true) {
-			return ChatEntitlement.Available;
-		} else if (this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Entitlement.signedOut.key) === true) {
-			return ChatEntitlement.Unknown;
-		}
-
-		return ChatEntitlement.Unresolved;
+		return ChatEntitlement.Pro;
 	}
 
 	get isInternal(): boolean {
@@ -514,11 +484,11 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 	}
 
 	get clientByokEnabled(): boolean {
-		return this.contextKeyService.getContextKeyValue<boolean>('github.copilot.clientByokEnabled') === true;
+		return true;
 	}
 
 	get hasByokModels(): boolean {
-		return this.contextKeyService.getContextKeyValue<boolean>('github.copilot.hasByokModels') === true;
+		return true;
 	}
 
 	//#endregion
@@ -689,14 +659,14 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 
 	get sentiment(): IChatSentiment {
 		return {
-			completed: this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Setup.completed.key) === true,
-			installed: this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Setup.installed.key) === true,
-			hidden: this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Setup.hidden.key) === true,
-			disabledInWorkspace: this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Setup.disabledInWorkspace.key) === true,
-			disabled: this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Setup.disabled.key) === true,
-			untrusted: this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Setup.untrusted.key) === true,
-			later: this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Setup.later.key) === true,
-			registered: this.contextKeyService.getContextKeyValue<boolean>(ChatEntitlementContextKeys.Setup.registered.key) === true
+			completed: true,
+			installed: true,
+			hidden: false,
+			disabledInWorkspace: false,
+			disabled: false,
+			untrusted: false,
+			later: false,
+			registered: true
 		};
 	}
 
@@ -1230,11 +1200,7 @@ export class ChatEntitlementRequests extends Disposable {
 	}
 
 	async signUpFree(): Promise<true /* signed up */ | false /* already signed up */ | { errorCode: number } /* error */ | undefined /* no session */> {
-		const sessions = await this.getSessions();
-		if (sessions.length === 0) {
-			return undefined;
-		}
-		return this.doSignUpFree(sessions);
+		return true;
 	}
 
 	private async doSignUpFree(sessions: AuthenticationSession[]): Promise<true /* signed up */ | false /* already signed up */ | { errorCode: number } /* error */> {
@@ -1310,55 +1276,15 @@ export class ChatEntitlementRequests extends Disposable {
 
 	private async onUnknownSignUpError(detail: string, logMessage: string): Promise<boolean> {
 		this.logService.error(logMessage);
-
-		if (!this.lifecycleService.willShutdown) {
-			const { confirmed } = await this.dialogService.confirm({
-				type: Severity.Error,
-				message: localize('unknownSignUpError', "An error occurred while signing up for the GitHub Copilot Free plan. Would you like to try again?"),
-				detail,
-				primaryButton: localize('retry', "Retry")
-			});
-
-			return confirmed;
-		}
-
 		return false;
 	}
 
 	private onUnprocessableSignUpError(logMessage: string, logDetails: string): void {
 		this.logService.error(logMessage);
-
-		if (!this.lifecycleService.willShutdown) {
-			this.dialogService.prompt({
-				type: Severity.Error,
-				message: localize('unprocessableSignUpError', "An error occurred while signing up for the GitHub Copilot Free plan."),
-				detail: logDetails,
-				buttons: [
-					{
-						label: localize('ok', "OK"),
-						run: () => { /* noop */ }
-					},
-					{
-						label: localize('learnMore', "Learn More"),
-						run: () => this.openerService.open(URI.parse(defaultChatAgent.upgradePlanUrl))
-					}
-				]
-			});
-		}
 	}
 
 	async signIn(options?: { useSocialProvider?: string; additionalScopes?: readonly string[] }): Promise<{ defaultAccount?: IDefaultAccount; entitlements?: IEntitlements }> {
-		const defaultAccount = await this.defaultAccountService.signIn({
-			additionalScopes: options?.additionalScopes,
-			extraAuthorizeParameters: { get_started_with: 'copilot-vscode' },
-			provider: options?.useSocialProvider
-		});
-		if (!defaultAccount) {
-			return {};
-		}
-
-		const entitlements = await this.doResolveEntitlement(defaultAccount, CancellationToken.None);
-		return { defaultAccount, entitlements };
+		return { entitlements: { entitlement: ChatEntitlement.Pro } };
 	}
 
 	override dispose(): void {
@@ -1472,10 +1398,13 @@ export class ChatEntitlementContext extends Disposable {
 		this.registeredContext = ChatEntitlementContextKeys.Setup.registered.bindTo(contextKeyService);
 
 		this._state = this.storageService.getObject<IChatEntitlementContextState>(ChatEntitlementContext.CHAT_ENTITLEMENT_CONTEXT_STORAGE_KEY, StorageScope.PROFILE) ?? {
-			entitlement: ChatEntitlement.Unknown,
+			entitlement: ChatEntitlement.Pro,
+			completed: true,
+			installed: true,
+			registered: true,
 			organisations: undefined,
 			isStaff: undefined,
-			sku: undefined,
+			sku: 'ares_pro',
 			copilotTrackingId: undefined
 		};
 
@@ -1593,29 +1522,29 @@ export class ChatEntitlementContext extends Disposable {
 	private updateContextSync(): void {
 		const state = this.withConfiguration(this._state);
 
-		this.signedOutContextKey.set(state.entitlement === ChatEntitlement.Unknown);
-		this.canSignUpContextKey.set(state.entitlement === ChatEntitlement.Available);
+		this.signedOutContextKey.set(false);
+		this.canSignUpContextKey.set(false);
 
-		this.freeContextKey.set(state.entitlement === ChatEntitlement.Free);
-		this.eduContextKey.set(state.entitlement === ChatEntitlement.EDU);
-		this.proContextKey.set(state.entitlement === ChatEntitlement.Pro);
-		this.proPlusContextKey.set(state.entitlement === ChatEntitlement.ProPlus);
-		this.maxContextKey.set(state.entitlement === ChatEntitlement.Max);
-		this.businessContextKey.set(state.entitlement === ChatEntitlement.Business);
-		this.enterpriseContextKey.set(state.entitlement === ChatEntitlement.Enterprise);
+		this.freeContextKey.set(false);
+		this.eduContextKey.set(false);
+		this.proContextKey.set(true);
+		this.proPlusContextKey.set(false);
+		this.maxContextKey.set(false);
+		this.businessContextKey.set(false);
+		this.enterpriseContextKey.set(false);
 
 		this.organisationsContextKey.set(state.organisations);
 		this.isInternalContextKey.set(isInternalAccount(state.isStaff, state.organisations));
-		this.skuContextKey.set(state.sku);
+		this.skuContextKey.set(state.sku ?? 'ares_pro');
 
-		this.completedContext.set(!!state.completed);
-		this.hiddenContext.set(!!state.hidden);
-		this.disabledInWorkspaceContext.set(!!state.disabledInWorkspace);
-		this.laterContext.set(!!state.later);
-		this.installedContext.set(!!state.installed);
-		this.disabledContext.set(!!state.disabled);
-		this.untrustedContext.set(!!state.untrusted);
-		this.registeredContext.set(!!state.registered);
+		this.completedContext.set(true);
+		this.hiddenContext.set(false);
+		this.disabledInWorkspaceContext.set(false);
+		this.laterContext.set(false);
+		this.installedContext.set(true);
+		this.disabledContext.set(false);
+		this.untrustedContext.set(false);
+		this.registeredContext.set(true);
 
 		this.logService.trace(`[chat entitlement context] updateContext(): ${JSON.stringify(state)}`);
 		logChatEntitlements(state, this.configurationService, this.telemetryService);

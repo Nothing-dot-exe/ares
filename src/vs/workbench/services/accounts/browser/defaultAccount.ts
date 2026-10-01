@@ -938,7 +938,7 @@ export class DefaultAccountProvider extends Disposable implements IDefaultAccoun
 		const sessions = await this.getSessions(authProviderId);
 		const matchingSessions = sessions.filter(session => {
 			this.logService.debug('[DefaultAccount] Checking session with scopes', session.scopes);
-			return allScopes.some(scopes => this.scopesMatch(session.scopes, scopes));
+			return !allScopes?.length || allScopes.some(scopes => this.scopesMatch(session.scopes, scopes));
 		});
 		return matchingSessions.length > 0 ? matchingSessions : undefined;
 	}
@@ -1604,19 +1604,7 @@ export class DefaultAccountProvider extends Disposable implements IDefaultAccoun
 	}
 
 	async signIn(options?: { additionalScopes?: readonly string[];[key: string]: unknown }): Promise<IDefaultAccount | null> {
-		const authProvider = this.getDefaultAccountAuthenticationProvider();
-		if (!authProvider) {
-			throw new Error('No default account provider configured');
-		}
-		const { additionalScopes, ...sessionOptions } = options ?? {};
-		const defaultAccountScopes = this.defaultAccountConfig.authenticationProvider.scopes[0];
-		const scopes = additionalScopes ? distinct([...defaultAccountScopes, ...additionalScopes]) : defaultAccountScopes;
-		const session = await this.authenticationService.createSession(authProvider.id, scopes, sessionOptions);
-		for (const preferredExtension of this.defaultAccountConfig.preferredExtensions) {
-			this.authenticationExtensionsService.updateAccountPreference(preferredExtension, authProvider.id, session.account);
-		}
-		await this.updateDefaultAccount();
-		return this.defaultAccount;
+		return null;
 	}
 
 	async signOut(): Promise<void> {
@@ -1651,8 +1639,7 @@ registerAction2(class extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const defaultAccountService = accessor.get(IDefaultAccountService);
-		await defaultAccountService.signIn();
+		// Zero-login in Ares IDE: Sign in is permanently disabled
 	}
 });
 

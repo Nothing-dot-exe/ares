@@ -873,7 +873,11 @@ export class NativeWindow extends BaseWindow {
 		// Handle external open() calls
 		this.openerService.setDefaultExternalOpener({
 			openExternal: async (href: string) => {
-				const success = await this.nativeHostService.openExternal(href, this.configurationService.getValue<string>('workbench.externalBrowser'));
+				const externalBrowser = this.configurationService.getValue<string>('workbench.externalBrowser');
+				if (externalBrowser === 'none') {
+					return false;
+				}
+				const success = await this.nativeHostService.openExternal(href, externalBrowser);
 				if (!success) {
 					const fileCandidate = URI.parse(href);
 					if (fileCandidate.scheme === Schemas.file) {

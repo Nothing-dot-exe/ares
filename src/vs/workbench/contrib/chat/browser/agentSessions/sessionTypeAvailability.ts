@@ -150,17 +150,9 @@ export function hasVisibleByokModelsTargetingSessionType(languageModelsService: 
  */
 export function getSessionTypeUnavailableDescription(availability: SessionTypeAvailability): IMarkdownString | undefined {
 	switch (availability) {
-		case SessionTypeAvailability.SignInRequired:
-			return new MarkdownString(
-				localize('chat.sessionType.signInLink', "[Sign in](command:workbench.action.chat.triggerSetup)"),
-				{ isTrusted: { enabledCommands: ['workbench.action.chat.triggerSetup'] } }
-			);
-		case SessionTypeAvailability.UpgradeRequired:
-			return new MarkdownString(
-				localize('chat.sessionType.upgradeLink', "[Upgrade](command:workbench.action.chat.upgradePlan)"),
-				{ isTrusted: { enabledCommands: ['workbench.action.chat.upgradePlan'] } }
-			);
 		case SessionTypeAvailability.NoModels:
+		case SessionTypeAvailability.SignInRequired:
+		case SessionTypeAvailability.UpgradeRequired:
 			return new MarkdownString(localize('chat.sessionType.noModels', "No models available"));
 		default:
 			return undefined;
@@ -169,22 +161,13 @@ export function getSessionTypeUnavailableDescription(availability: SessionTypeAv
 
 /**
  * The hover shown for an unavailable session type, or `undefined` when it is
- * available. Free / Student users are prompted to upgrade; paid users with no
- * models get an explanation with no upgrade link.
+ * available.
  */
 export function getSessionTypeUnavailableHover(availability: SessionTypeAvailability): IMarkdownString | undefined {
 	switch (availability) {
-		case SessionTypeAvailability.SignInRequired: {
-			const hover = new MarkdownString('', { isTrusted: { enabledCommands: ['workbench.action.chat.triggerSetup'] }, supportThemeIcons: true });
-			hover.appendMarkdown(localize('chat.sessionType.signInHover', "[Sign in to GitHub Copilot](command:workbench.action.chat.triggerSetup) to use this agent."));
-			return hover;
-		}
-		case SessionTypeAvailability.UpgradeRequired: {
-			const hover = new MarkdownString('', { isTrusted: { enabledCommands: ['workbench.action.chat.upgradePlan'] }, supportThemeIcons: true });
-			hover.appendMarkdown(localize('chat.sessionType.upgradeHover', "[Upgrade to GitHub Copilot Pro](command:workbench.action.chat.upgradePlan) to use this agent."));
-			return hover;
-		}
 		case SessionTypeAvailability.NoModels:
+		case SessionTypeAvailability.SignInRequired:
+		case SessionTypeAvailability.UpgradeRequired:
 			return new MarkdownString(localize('chat.sessionType.noModelsHover', "No models are available for this agent."));
 		default:
 			return undefined;
@@ -198,11 +181,9 @@ export function getSessionTypeUnavailableHover(availability: SessionTypeAvailabi
 export function getSessionTypeUnavailableLabel(availability: SessionTypeAvailability): string | undefined {
 	switch (availability) {
 		case SessionTypeAvailability.SignInRequired:
-			return localize('chat.sessionType.signInMobile', "Requires sign in");
 		case SessionTypeAvailability.UpgradeRequired:
-			return localize('chat.sessionType.upgradeMobile', "Requires GitHub Copilot Pro");
 		case SessionTypeAvailability.NoModels:
-			return localize('chat.sessionType.noModels', "No models available");
+			return localize('chat.sessionType.noModelsMobile', "No models available");
 		default:
 			return undefined;
 	}

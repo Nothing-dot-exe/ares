@@ -895,11 +895,11 @@ export class InlineChatController implements IEditorContribution {
 
 	async #selectVendorDefaultModel(session: IInlineChatSession): Promise<void> {
 		const model = this.#zone.value.widget.chatWidget.input.selectedLanguageModel.get();
-		if (model && !model.metadata.isDefaultForLocation[session.chatModel.initialLocation]) {
+		if (model && !model.metadata.isDefaultForLocation?.[session.chatModel.initialLocation]) {
 			const ids = await this.#languageModelService.selectLanguageModels({ vendor: model.metadata.vendor });
 			for (const identifier of ids) {
 				const candidate = this.#languageModelService.lookupLanguageModel(identifier);
-				if (candidate?.isDefaultForLocation[session.chatModel.initialLocation]) {
+				if (candidate?.isDefaultForLocation?.[session.chatModel.initialLocation]) {
 					this.#zone.value.widget.chatWidget.input.setCurrentLanguageModel({ metadata: candidate, identifier });
 					break;
 				}

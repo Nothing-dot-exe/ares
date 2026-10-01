@@ -182,7 +182,7 @@ export function createAgentSdkSetupNotification(setup: IAgentSdkSetupInfo, displ
 	// Nothing to ask of a user who is already set up. An empty `displayName` means
 	// the host has not described this agent yet, and "Download the  Agent" is worse
 	// than none; the next root-state change is moments away.
-	if (!displayName || state === undefined || state === 'resolved') {
+	if (!displayName || state === undefined || state === 'resolved' || state === 'noAccount') {
 		return undefined;
 	}
 	const base = {

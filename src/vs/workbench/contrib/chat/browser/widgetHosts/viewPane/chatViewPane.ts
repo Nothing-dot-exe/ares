@@ -523,7 +523,7 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 		);
 		const inputValue = observableFromEvent(
 			this,
-			this._widget.inputEditor.onDidChangeModelContent,
+			this._widget.inputEditor?.onDidChangeModelContent ?? Event.None,
 			() => this._widget.getInput()
 		);
 		const transcriptOverlay = $('.voice-transcript-overlay');
@@ -975,13 +975,9 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 			newSessionsContainerVisible = false; // disabled in settings
 		} else {
 
-			// Sessions control: stacked
+			// Sessions control: stacked - never hijack the chat widget with an empty sessions container in Ares IDE
 			if (this.sessionsViewerOrientation === AgentSessionsViewerOrientation.Stacked) {
-				newSessionsContainerVisible =
-					(!!this.chatEntitlementService.sentiment.completed || this.chatEntitlementService.hasByokModels) &&					// chat is setup (otherwise make room for terms and welcome)
-					(!this._widget || (this._widget.isEmpty() && !!this._widget.viewModel && !this._widget.viewModel.model.title)) &&	// chat widget empty (but not when model is loading or has a title)
-					this._sessionsListSuppressionCount === 0 &&																			// not mid-transition (a slow session transiently shows an empty widget)
-					!this.welcomeController?.isShowingWelcome.get();																	// welcome not showing
+				newSessionsContainerVisible = false;
 			}
 
 			// Sessions control: sidebar
@@ -1842,14 +1838,8 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 	}
 
 	override shouldShowWelcome(): boolean {
-		const noPersistedSessions = !this.chatService.hasSessions();
-		const hasCoreAgent = this.chatAgentService.getAgents().some(agent => agent.isCore && agent.locations.includes(ChatAgentLocation.Chat));
-		const hasDefaultAgent = this.chatAgentService.getDefaultAgent(ChatAgentLocation.Chat) !== undefined; // only false when Hide AI Features has run and unregistered the setup agents
-		const shouldShow = !hasCoreAgent && (!hasDefaultAgent || !this._widget?.viewModel && noPersistedSessions);
-
-		this.logService.trace(`ChatViewPane#shouldShowWelcome() = ${shouldShow}: hasCoreAgent=${hasCoreAgent} hasDefaultAgent=${hasDefaultAgent} || noViewModel=${!this._widget?.viewModel} && noPersistedSessions=${noPersistedSessions}`);
-
-		return !!shouldShow;
+		// Ares IDE features built-in core AI; never gate or hide the chat widget behind welcome views
+		return false;
 	}
 
 	getMatchingWelcomeView(): IChatViewsWelcomeDescriptor | undefined {

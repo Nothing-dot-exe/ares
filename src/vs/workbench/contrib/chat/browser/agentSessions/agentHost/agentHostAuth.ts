@@ -833,9 +833,9 @@ async function forceAuthenticationInteractively(
 		const scopes = resource.scopes_supported ?? [];
 		const setupResult = await commandService.executeCommand<IChatSetupResult>(CHAT_SETUP_ACTION_ID, undefined, {
 			telemetrySource: 'agentHost',
-			forceSignInDialog: true,
+			forceSignInDialog: false,
 			additionalScopes: scopes,
-			dialogTitle: localize('agentHost.signInDialogTitle', "Sign in to use GitHub Copilot"),
+			dialogTitle: localize('agentHost.signInDialogTitle', "Ares AI Authentication"),
 			disableChatViewReveal: true,
 			returnResult: true,
 		});
@@ -845,7 +845,8 @@ async function forceAuthenticationInteractively(
 			return undefined;
 		}
 		if (!setupResult.success) {
-			throw setupResult.error ?? new Error(localize('agentHost.signInFailed', "Failed to sign in to use GitHub Copilot."));
+			data.result = 'failed';
+			return undefined;
 		}
 		let sessionResolution = await resolveSessionForProtectedResource(authenticationService, logService, resource, options);
 		if (sessionResolution.kind === 'signedOut' && options.authTokenCache?.getRejectedSession(resource.resource, scopes)) {

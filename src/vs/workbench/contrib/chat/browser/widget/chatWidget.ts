@@ -2921,9 +2921,9 @@ export class ChatWidget extends Disposable implements IChatWidget {
 				placeholder = localize('chat.input.placeholder.lockedToAgent', "Chat with {0}", this._lockedAgent.displayName || this._lockedAgent.name);
 			}
 			this.viewModel.setInputPlaceholder(placeholder);
-			this.inputEditor.updateOptions({ placeholder });
+			this.inputEditor?.updateOptions({ placeholder });
 		} else if (this.viewModel.inputPlaceholder) {
-			this.inputEditor.updateOptions({ placeholder: this.viewModel.inputPlaceholder });
+			this.inputEditor?.updateOptions({ placeholder: this.viewModel.inputPlaceholder });
 		}
 
 		this.viewModelDisposables.add(Event.runAndSubscribe(Event.accumulate(this.viewModel.onDidChange), (events => {
@@ -2939,7 +2939,7 @@ export class ChatWidget extends Disposable implements IChatWidget {
 
 			// Update the editor's placeholder text when it changes in the view model
 			if (events?.some(e => e?.kind === 'changePlaceholder')) {
-				this.inputEditor.updateOptions({ placeholder: this.viewModel.inputPlaceholder });
+				this.inputEditor?.updateOptions({ placeholder: this.viewModel.inputPlaceholder });
 			}
 
 			this.onDidChangeItems();

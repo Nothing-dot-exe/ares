@@ -1645,26 +1645,78 @@ export class ChatModelsWidget extends Disposable {
 
 	private updateAddModelsButton(): void {
 		const configurableVendors = this.languageModelsService.getVendors().filter(vendor => vendor.managementCommand || vendor.configuration);
+		const supportsAddingModels = true;
 
-		const entitlement = this.chatEntitlementService.entitlement;
-		const isManagedEntitlement = entitlement === ChatEntitlement.Business || entitlement === ChatEntitlement.Enterprise;
-		const supportsAddingModels = this.chatEntitlementService.isInternal
-			|| this.chatEntitlementService.clientByokEnabled
-			|| (entitlement !== ChatEntitlement.Unknown
-				&& entitlement !== ChatEntitlement.Available
-				&& !isManagedEntitlement);
-
-		this.dropdownActions = buildAddModelsDropdownActions(
+		const vendorActions = buildAddModelsDropdownActions(
 			configurableVendors,
 			supportsAddingModels,
 			vendor => this.addModelsForVendor(vendor),
-			this.defaultAccountResolved && this.defaultAccountService.currentDefaultAccount === null
-				? () => this.commandService.executeCommand(CHAT_SETUP_ACTION_ID)
-				: undefined,
+			undefined, // Never show Copilot sign-in
 		);
 
-		this.addButton.enabled = this.dropdownActions.length > 0;
-		this.addButton.setTitle(!supportsAddingModels && isManagedEntitlement ? localize('models.managedByOrganization', "Adding models is managed by your organization") : '');
+		const ourActions: IAction[] = [
+			toAction({
+				id: 'universal-ai.addModel',
+				label: localize('models.addModelAction', "Add AI Model..."),
+				run: async () => {
+					await this.commandService.executeCommand('universal-ai.addModel');
+				}
+			}),
+			toAction({
+				id: 'universal-ai.testApiKey',
+				label: localize('models.testApiKeyAction', "Test API Key Connection..."),
+				run: async () => {
+					await this.commandService.executeCommand('universal-ai.testApiKey');
+				}
+			}),
+			toAction({
+				id: 'universal-ai.setApiKey',
+				label: localize('models.setApiKeyAction', "Configure API Keys..."),
+				run: async () => {
+					await this.commandService.executeCommand('universal-ai.setApiKey');
+				}
+			}),
+			new Separator(),
+			toAction({
+				id: 'universal-ai.addGroq',
+				label: "Add Groq Model",
+				run: async () => {
+					await this.commandService.executeCommand('universal-ai.addModel', 'Groq');
+				}
+			}),
+			toAction({
+				id: 'universal-ai.addOpenRouter',
+				label: "Add OpenRouter Model",
+				run: async () => {
+					await this.commandService.executeCommand('universal-ai.addModel', 'OpenRouter');
+				}
+			}),
+			toAction({
+				id: 'universal-ai.addNvidia',
+				label: "Add NVIDIA Model",
+				run: async () => {
+					await this.commandService.executeCommand('universal-ai.addModel', 'NVIDIA');
+				}
+			}),
+			toAction({
+				id: 'universal-ai.addOllama',
+				label: "Add Local Ollama Model",
+				run: async () => {
+					await this.commandService.executeCommand('universal-ai.addModel', 'Local Ollama');
+				}
+			}),
+			toAction({
+				id: 'universal-ai.addCustom',
+				label: "Add Custom OpenAI Model",
+				run: async () => {
+					await this.commandService.executeCommand('universal-ai.addModel', 'Custom');
+				}
+			})
+		];
+
+		this.dropdownActions = [...ourActions, ...(vendorActions.length > 0 ? [new Separator(), ...vendorActions] : [])];
+		this.addButton.enabled = true;
+		this.addButton.setTitle(localize('models.addModelsTitle', "Add language models and test API keys"));
 	}
 
 	private async openLanguageModelProviderExtensionsSearch(): Promise<void> {

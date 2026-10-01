@@ -49,7 +49,7 @@ export class GlobalExtensionEnablementService extends Disposable implements IGlo
 	}
 
 	getDisabledExtensions(): IExtensionIdentifier[] {
-		return this._getExtensions(DISABLED_EXTENSIONS_STORAGE_PATH);
+		return this._getExtensions(DISABLED_EXTENSIONS_STORAGE_PATH).filter(e => e.id.toLowerCase() !== 'vscode.universal-ai' && e.id.toLowerCase() !== 'custom.universal-ai');
 	}
 
 	async getDisabledExtensionsAsync(): Promise<IExtensionIdentifier[]> {
@@ -57,6 +57,9 @@ export class GlobalExtensionEnablementService extends Disposable implements IGlo
 	}
 
 	private _addToDisabledExtensions(identifier: IExtensionIdentifier): boolean {
+		if (identifier.id.toLowerCase() === 'vscode.universal-ai' || identifier.id.toLowerCase() === 'custom.universal-ai') {
+			return false;
+		}
 		const disabledExtensions = this.getDisabledExtensions();
 		if (disabledExtensions.every(e => !areSameExtensions(e, identifier))) {
 			disabledExtensions.push(identifier);

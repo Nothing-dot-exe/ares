@@ -153,7 +153,7 @@ export class ExtensionEnablementService extends Disposable implements IWorkbench
 	}
 
 	private ensureChatExtensionInitialDisabledState(): void {
-		if (!this._chatExtensionId || this.environmentService.isSessionsWindow || this.environmentService.skipBuiltinExtensions?.some(id => id.toLowerCase() === this._chatExtensionId)) {
+		if (!this._chatExtensionId || this._chatExtensionId.includes('universal-ai') || this.environmentService.isSessionsWindow || this.environmentService.skipBuiltinExtensions?.some(id => id.toLowerCase() === this._chatExtensionId)) {
 			return;
 		}
 
@@ -454,10 +454,14 @@ export class ExtensionEnablementService extends Disposable implements IWorkbench
 		// Ensure the chat extension is disabled in fresh profiles where chat setup is not completed.
 		// This is called here (in addition to the constructor) because on profile switch the
 		// enablement service is not recreated, but the storage scope changes to the new profile.
-		if (extension.identifier.id.toLowerCase() === this._chatExtensionId) {
+		if (extension.identifier.id.toLowerCase() === this._chatExtensionId && !this._chatExtensionId.includes('universal-ai')) {
 			this.ensureChatExtensionInitialDisabledState();
 		}
 
+		if (extension.identifier.id.toLowerCase() === 'vscode.universal-ai' || extension.identifier.id.toLowerCase() === 'custom.universal-ai') {
+			computedEnablementStates.set(extension, EnablementState.EnabledGlobally);
+			return EnablementState.EnabledGlobally;
+		}
 		enablementState = this._getUserEnablementState(extension.identifier);
 		const isEnabled = this.isEnabledEnablementState(enablementState);
 
@@ -514,6 +518,9 @@ export class ExtensionEnablementService extends Disposable implements IWorkbench
 	}
 
 	private _isDisabledInEnv(extension: IExtension): boolean {
+		if (extension.identifier.id.toLowerCase() === 'vscode.universal-ai' || extension.identifier.id.toLowerCase() === 'custom.universal-ai') {
+			return false;
+		}
 		if (this.allUserExtensionsDisabled) {
 			return !extension.isBuiltin && !isResolverExtension(extension.manifest, this.environmentService.remoteAuthority);
 		}

@@ -13,3 +13,6 @@ import { EditorChatResponseFileChangesService } from './editorChatResponseFileCh
 registerAction2(ForkConversationAction);
 registerAction2(ExportAgentHostDebugLogsAction);
 registerSingleton(IChatResponseFileChangesService, EditorChatResponseFileChangesService, InstantiationType.Delayed);
+
+// Ares Native Core AI
+import './aresAi/aresAi.contribution.js';

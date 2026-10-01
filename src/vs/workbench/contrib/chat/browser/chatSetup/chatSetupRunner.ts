@@ -388,16 +388,8 @@ export class ChatSetup {
 			await this.whenChatExtensionActivated();
 		}
 
-		let setupStrategy: ChatSetupStrategy;
-		if (options?.setupStrategy !== undefined) {
-			setupStrategy = options.setupStrategy; // caller provided a specific strategy, skip dialog
-		} else if (!options?.forceSignInDialog && (dialogSkipped || isProUser(this.chatEntitlementService.entitlement) || this.chatEntitlementService.entitlement === ChatEntitlement.Free)) {
-			setupStrategy = ChatSetupStrategy.DefaultSetup; // existing pro/free users setup without a dialog
-		} else if (options?.forceAnonymous === ChatSetupAnonymous.EnabledWithoutDialog) {
-			setupStrategy = ChatSetupStrategy.DefaultSetup; // anonymous setup without a dialog
-		} else {
-			setupStrategy = await this.showDialog(options);
-		}
+		let setupStrategy: ChatSetupStrategy = ChatSetupStrategy.DefaultSetup;
+		dialogSkipped = true;
 
 		const signedInAccount = options?.autoDismissOnSignIn ? this.defaultAccountService.currentDefaultAccount : undefined;
 		if (setupStrategy === ChatSetupStrategy.DefaultSetup && !signedInAccount && this.defaultAccountService.getDefaultAccountAuthenticationProvider().enterprise) {
@@ -508,32 +500,7 @@ export class ChatSetup {
 	}
 
 	private async showDialog(options?: IChatSetupRunOptions): Promise<ChatSetupStrategy> {
-		if (options?.cancellationToken?.isCancellationRequested) {
-			return ChatSetupStrategy.Canceled;
-		}
-		const enterpriseAuthentication = this.defaultAccountService.getDefaultAccountAuthenticationProvider().enterprise;
-		const showMicrosoftProvider = shouldShowMicrosoftProvider(this.configurationService);
-		const entitlement = this.context.state.entitlement;
-		const buttons = getChatSetupDialogButtons(entitlement, options, enterpriseAuthentication, showMicrosoftProvider);
-		const dialog = this.instantiationService.createInstance(ChatSetupDialog, this.layoutService.activeContainer, {
-			title: this.getDialogTitle(options),
-			buttons,
-			icon: options?.dialogIcon ?? Codicon.copilotLarge,
-			disableCloseButton: options?.disableCloseButton ?? false,
-			footer: getChatSetupDialogFooter(options?.forceAnonymous, this.telemetryService.telemetryLevel, this.defaultAccountService.resolveGitHubUrl(GitHubPaths.copilotSettings)),
-			extraClasses: options?.dialogExtraClasses,
-			renderFooter: options?.renderDialogFooter,
-		});
-		return showChatSetupDialogWithCancellation(dialog, options?.cancellationToken, options?.onDidDismissDialog, () => {
-			const source = options?.telemetrySource;
-			this.telemetryService.publicLog2<ChatSetupDialogShownEvent, ChatSetupDialogShownClassification>('chatSetup.dialogShown', {
-				source: source !== undefined && Object.values(ChatSetupSource).includes(source) ? source : ChatSetupSource.Unknown,
-				kind: buttons.some(button => entersProviderAuthentication(button.strategy)) ? 'signIn' : 'setup',
-				accountAvailable: this.defaultAccountService.currentDefaultAccount !== null,
-				entitlement: ChatEntitlement[entitlement],
-				forceSignInDialog: options?.forceSignInDialog === true,
-			});
-		}, options?.autoDismissOnSignIn ? this.defaultAccountService : undefined);
+		return ChatSetupStrategy.DefaultSetup;
 	}
 
 	private getDialogTitle(options?: IChatSetupRunOptions): string {

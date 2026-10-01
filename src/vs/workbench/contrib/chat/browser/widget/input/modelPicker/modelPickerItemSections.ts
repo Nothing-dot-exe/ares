@@ -61,40 +61,7 @@ export function buildUnavailableStateItems(options: IBuildModelPickerItemsOption
 		];
 	}
 	if (setupRequired) {
-		const enabled = !!options.actions.onRequestSetup;
-		const items: IActionListItem<IActionWidgetDropdownAction>[] = [
-			{ kind: ActionListItemKind.Header, label: localize('chat.modelPicker.setupRequired', "Sign in to use Copilot") },
-			{
-				item: {
-					id: SETUP_REQUIRED_SIGN_IN_ACTION_ID,
-					enabled,
-					checked: false,
-					class: undefined,
-					tooltip: localize('chat.modelPicker.setupRequired.signInTooltip', "Sign in to GitHub Copilot to choose a model."),
-					label: localize('chat.modelPicker.setupRequired.signIn', "Sign in to use Copilot..."),
-					run: () => options.actions.onRequestSetup?.(),
-				},
-				kind: ActionListItemKind.Action,
-				label: localize('chat.modelPicker.setupRequired.signIn', "Sign in to use Copilot..."),
-				group: { title: '', icon: ThemeIcon.fromId(Codicon.signIn.id) },
-				disabled: !enabled,
-				hideIcon: false,
-			},
-		];
-		if (options.presentation.showManageModelsInSetupRequired && options.manageModelsAction) {
-			items.push(
-				{ kind: ActionListItemKind.Separator },
-				{
-					item: options.manageModelsAction,
-					kind: ActionListItemKind.Action,
-					label: options.manageModelsAction.label,
-					group: { title: '', icon: Codicon.blank },
-					hideIcon: false,
-					showAlways: true,
-				}
-			);
-		}
-		return items;
+		return undefined;
 	}
 	if (options.models.length > 0) {
 		return undefined;

@@ -232,7 +232,7 @@ export class SessionModelSelection extends Disposable implements ISessionModelSe
 			getConfiguredModelValue: () => this._configurationService.getValue<string>(ChatConfiguration.DefaultModel),
 			// A session runs whatever its provider published: no mode, nowhere else to show it.
 			isModelSupportedHere: () => true,
-			getDeclaredDefaultModel: models => models.find(model => model.metadata.isDefaultForLocation[ChatAgentLocation.Chat]),
+			getDeclaredDefaultModel: models => models.find(model => model.metadata.isDefaultForLocation?.[ChatAgentLocation.Chat]),
 			getBoundConversationKey: () => this._boundConversationKey,
 			getIntentHolder: () => this._conversation().intent,
 			applyModel: model => this._pushModelToProvider(model),

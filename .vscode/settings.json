@@ -1,4 +1,6 @@
 {
+	"security.workspace.trust.enabled": false,
+	"chat.implicitContext.enabled": { "panel": "always" },
 	// --- Chat ---
 	"inlineChat.affordance": "editor",
 	"chat.tools.terminal.autoApprove": {

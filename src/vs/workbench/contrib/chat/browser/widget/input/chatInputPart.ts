@@ -1008,7 +1008,7 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 			getConfiguredModelValue: () => this.getConfiguredModelValue(),
 			// Workbench chat runs a mode, and can be shown inline, so both bear on what it can run.
 			isModelSupportedHere: model => isModelSupportedForMode(model, this.currentModeKind) && isModelSupportedForInlineChat(model, this.location),
-			getDeclaredDefaultModel: models => models.find(model => model.metadata.isDefaultForLocation[this.location]),
+			getDeclaredDefaultModel: models => models.find(model => model.metadata.isDefaultForLocation?.[this.location]),
 			subscribeToModelChanges: listener => this.languageModelsService.onDidChangeLanguageModels(listener),
 			getBoundConversationKey: () => this._inputModelSessionResource?.toString(),
 			getIntentHolder: () => this._intentHolder,
@@ -1198,7 +1198,7 @@ export class ChatInputPart extends Disposable implements IHistoryNavigationWidge
 				newOptions.autoSurround = this.configurationService.getValue('editor.autoSurround');
 			}
 
-			this.inputEditor.updateOptions(newOptions);
+			this._inputEditor?.updateOptions(newOptions);
 		}));
 
 		this._chatEditsListPool = this._register(this.instantiationService.createInstance(CollapsibleListPool, this._onDidChangeVisibility.event, MenuId.ChatEditingWidgetModifiedFilesToolbar, { verticalScrollMode: ScrollbarVisibility.Visible }));

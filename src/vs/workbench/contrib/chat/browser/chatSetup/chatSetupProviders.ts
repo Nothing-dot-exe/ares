@@ -393,12 +393,7 @@ export class SetupAgent extends Disposable implements IChatAgentImplementation {
 				}
 
 				if (ready === 'timedout') {
-					let warningMessage: string;
-					if (this.chatEntitlementService.anonymous) {
-						warningMessage = localize('chatTookLongWarningAnonymous', "Chat took too long to get ready. Please ensure that the extension `{0}` is installed and enabled. Click restart to try again if this issue persists.", defaultChat.chatExtensionId);
-					} else {
-						warningMessage = localize('chatTookLongWarning', "Chat took too long to get ready. Please ensure you are signed in to {0} and that the extension `{1}` is installed and enabled. Click restart to try again if this issue persists.", defaultChat.provider.default.name, defaultChat.chatExtensionId);
-					}
+					const warningMessage = localize('chatTookLongWarningAres', "Ares AI — Provider unavailable. Please check your provider connection or switch providers using the Ares AI Status Bar.");
 
 					const diagnosticInfo = this.computeDiagnosticInfo(agentActivated, agentReady, languageModelReady, toolsModelReady, requestModel, languageModelsService, chatAgentService, modeInfo);
 
@@ -581,7 +576,7 @@ export class SetupAgent extends Disposable implements IChatAgentImplementation {
 
 			for (const id of languageModelsService.getLanguageModelIds()) {
 				const model = languageModelsService.lookupLanguageModel(id);
-				if (model?.isDefaultForLocation[ChatAgentLocation.Chat]) {
+				if (model?.isDefaultForLocation?.[ChatAgentLocation.Chat]) {
 					return true;
 				}
 			}
@@ -645,7 +640,7 @@ export class SetupAgent extends Disposable implements IChatAgentImplementation {
 		let languageModelDefaultCount = 0;
 		for (const id of languageModelIds) {
 			const model = languageModelsService.lookupLanguageModel(id);
-			if (model?.isDefaultForLocation[ChatAgentLocation.Chat]) {
+			if (model?.isDefaultForLocation?.[ChatAgentLocation.Chat]) {
 				languageModelDefaultCount++;
 			}
 		}

@@ -580,61 +580,76 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private renderSetupSection(): void {
-		const hasByokModels = this.chatEntitlementService.hasByokModels;
-		const newUser = isNewUser(this.chatEntitlementService) && !hasByokModels;
-		const anonymousUser = this.chatEntitlementService.anonymous;
-		const disabled = this.chatEntitlementService.sentiment.disabled || this.chatEntitlementService.sentiment.untrusted;
-		// Keep the Sign-in entry visible even when BYOK models are present so air-gapped
-		// users can still authenticate to unlock the full Copilot experience.
-		const signedOut = this.chatEntitlementService.entitlement === ChatEntitlement.Unknown;
-		if (!(newUser || signedOut || disabled)) {
-			return;
-		}
-
 		this.element.appendChild($('hr'));
 
-		let descriptionText: string | MarkdownString;
-		let descriptionClass = '.description';
-		if (newUser && anonymousUser) {
-			descriptionText = new MarkdownString(localize({ key: 'activeDescriptionAnonymous', comment: ['{Locked="]({2})"}', '{Locked="]({3})"}'] }, "By continuing with {0} Copilot, you agree to {1}'s [Terms]({2}) and [Privacy Statement]({3})", defaultChat.provider.default.name, defaultChat.provider.default.name, defaultChat.termsStatementUrl, defaultChat.privacyStatementUrl), { isTrusted: true });
-			descriptionClass = `${descriptionClass}.terms`;
-		} else if (newUser) {
-			descriptionText = localize('activateDescription', "Set up Copilot to use AI features.");
-		} else if (anonymousUser) {
-			descriptionText = localize('enableMoreDescription', "Sign in to enable more Copilot AI features.");
-		} else if (disabled) {
-			descriptionText = localize('enableDescription', "Enable Copilot to use AI features.");
-		} else {
-			descriptionText = localize('signInDescription', "Sign in to use GitHub Copilot AI features.");
-		}
+		const container = this.element.appendChild($('div.custom-ai-control'));
+		container.style.display = 'flex';
+		container.style.flexDirection = 'column';
+		container.style.gap = '8px';
+		container.style.padding = '4px 0';
 
-		let buttonLabel: string;
-		if (newUser) {
-			buttonLabel = localize('enableAIFeatures', "Use AI Features");
-		} else if (anonymousUser) {
-			buttonLabel = localize('enableMoreAIFeatures', "Enable more AI Features");
-		} else if (disabled) {
-			buttonLabel = localize('enableCopilotButton', "Enable AI Features");
-		} else {
-			buttonLabel = localize('signInToUseAIFeatures', "Sign in to use GitHub Copilot");
-		}
+		const statusText = container.appendChild($('div.description'));
+		statusText.style.fontSize = '12px';
+		statusText.style.opacity = '0.85';
 
-		let commandId: string;
-		if (newUser && anonymousUser) {
-			commandId = 'workbench.action.chat.triggerSetupAnonymousWithoutDialog';
-		} else {
-			commandId = 'workbench.action.chat.triggerSetup';
-		}
+		const toggleButton = this._store.add(new Button(container, {
+			...defaultButtonStyles,
+			hoverDelegate: nativeHoverDelegate
+		}));
 
-		if (typeof descriptionText === 'string') {
-			this.element.appendChild($(`div${descriptionClass}`, undefined, descriptionText));
-		} else {
-			this.element.appendChild($(`div${descriptionClass}`, undefined, this._store.add(this.markdownRendererService.render(descriptionText)).element));
-		}
+		const settingId = defaultChat.completionsEnablementSetting;
 
-		const button = this._store.add(new Button(this.element, { ...defaultButtonStyles, hoverDelegate: nativeHoverDelegate }));
-		button.label = buttonLabel;
-		this._store.add(button.onDidClick(() => this.runCommandAndClose(commandId)));
+		const isCurrentlyEnabled = () => {
+			const lang = this.editorService.activeTextEditorLanguageId;
+			return lang ? isCompletionsEnabled(this.configurationService, lang) : isCompletionsEnabled(this.configurationService, '*');
+		};
+
+		const updateControl = () => {
+			const isEnabled = isCurrentlyEnabled();
+			if (isEnabled) {
+				const lang = this.editorService.activeTextEditorLanguageId;
+				statusText.textContent = lang
+					? `Universal AI is active for ${lang}.`
+					: 'Universal AI inline completions are active.';
+				toggleButton.label = 'Disable Inline Suggestions';
+			} else {
+				statusText.textContent = 'Universal AI inline completions are disabled.';
+				toggleButton.label = 'Enable Inline Suggestions';
+			}
+		};
+
+		updateControl();
+
+		this._store.add(toggleButton.onDidClick(async () => {
+			const currentlyEnabled = isCurrentlyEnabled();
+			const targetState = !currentlyEnabled;
+			const lang = this.editorService.activeTextEditorLanguageId;
+
+			const existing = this.configurationService.getValue<Record<string, boolean>>(settingId);
+			const updated: Record<string, boolean> = isObject(existing) ? { ...existing } : Object.create(null);
+
+			if (!targetState) {
+				for (const k of Object.keys(updated)) {
+					updated[k] = false;
+				}
+				updated['*'] = false;
+			} else {
+				updated['*'] = true;
+				if (lang) {
+					updated[lang] = true;
+				}
+			}
+
+			await this.configurationService.updateValue(settingId, updated);
+			await this.configurationService.updateValue('editor.inlineSuggest.enabled', targetState);
+			updateControl();
+		}));
+
+		this._store.add(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(settingId) || e.affectsConfiguration('editor.inlineSuggest.enabled')) {
+				updateControl();
+			}
+		}));
 	}
 
 	private renderInlineSuggestionsContent(container: HTMLElement): void {
@@ -709,18 +724,7 @@ export class ChatStatusDashboard extends DomWidget {
 	}
 
 	private canUseChat(): boolean {
-		if (!this.chatEntitlementService.sentiment.completed || this.chatEntitlementService.sentiment.disabled || this.chatEntitlementService.sentiment.untrusted) {
-			return false; // chat not completed or not enabled
-		}
-
-		if (this.chatEntitlementService.entitlement === ChatEntitlement.Unknown || this.chatEntitlementService.entitlement === ChatEntitlement.Available) {
-			return this.chatEntitlementService.anonymous; // signed out or not-yet-signed-up users can only use Chat if anonymous access is allowed
-		}
-
-		if (this.chatEntitlementService.entitlement === ChatEntitlement.Free && this.chatEntitlementService.quotas.chat?.percentRemaining === 0 && this.chatEntitlementService.quotas.completions?.percentRemaining === 0) {
-			return false; // free user with no quota left
-		}
-
+		// Always return true to enable local free inline suggestions without Copilot subscription
 		return true;
 	}
 
@@ -1071,22 +1075,15 @@ export class ChatStatusDashboard extends DomWidget {
 			checkbox.checked = state;
 			checkbox.domNode.setAttribute('aria-checked', state === 'mixed' ? 'mixed' : String(state));
 		};
-		const getNextState = () => requestedState === true ? false : requestedState === false ? 'mixed' : true;
+		const getNextState = () => !requestedState;
 
-		const writeState = async (state: boolean | 'mixed') => {
+		const writeState = async (state: boolean) => {
 			const configuredValue = this.findConfiguredCompletionsValue(modeId) ?? this.findConfiguredCompletionsValue();
-			if (state === 'mixed') {
-				for (const configuredValue of this.findConfiguredCompletionsValues(modeId)) {
-					const { [modeId]: _, ...rest } = configuredValue.value;
-					await this.configurationService.updateValue(settingId, rest, configuredValue.target);
-				}
+			const value = { ...configuredValue?.value, [modeId]: state };
+			if (configuredValue) {
+				await this.configurationService.updateValue(settingId, value, configuredValue.target);
 			} else {
-				const value = { ...configuredValue?.value, [modeId]: state };
-				if (configuredValue) {
-					await this.configurationService.updateValue(settingId, value, configuredValue.target);
-				} else {
-					await this.configurationService.updateValue(settingId, value);
-				}
+				await this.configurationService.updateValue(settingId, value);
 			}
 
 			const enabled = isCompletionsEnabled(this.configurationService, modeId);
@@ -1169,19 +1166,24 @@ export class ChatStatusDashboard extends DomWidget {
 
 		return {
 			readSetting: () => isCompletionsEnabled(this.configurationService, modeId),
-			writeSetting: (value: boolean) => {
+			writeSetting: async (value: boolean) => {
 				this.telemetryService.publicLog2<ChatSettingChangedEvent, ChatSettingChangedClassification>('chatStatus.settingChanged', {
 					settingIdentifier: settingId,
 					settingMode: modeId,
 					settingEnablement: value ? 'enabled' : 'disabled'
 				});
 
-				let result = this.configurationService.getValue<Record<string, boolean>>(settingId);
-				if (!isObject(result)) {
-					result = Object.create(null);
+				const result = this.configurationService.getValue<Record<string, boolean>>(settingId);
+				const updated: Record<string, boolean> = isObject(result) ? { ...result } : Object.create(null);
+				updated[modeId] = value;
+				if (!value && modeId === '*') {
+					for (const k of Object.keys(updated)) {
+						updated[k] = false;
+					}
 				}
 
-				return this.configurationService.updateValue(settingId, { ...result, [modeId]: value });
+				await this.configurationService.updateValue(settingId, updated);
+				await this.configurationService.updateValue('editor.inlineSuggest.enabled', value);
 			}
 		};
 	}

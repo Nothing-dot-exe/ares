@@ -374,13 +374,7 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
 					menu: {
 						id: MenuId.AccountsContext,
 						group: '2_copilot',
-						when: ContextKeyExpr.and(
-							ChatContextKeys.Setup.hidden.negate(),
-							ChatContextKeys.Setup.disabledInWorkspace.negate(),
-							CONTEXT_DEFAULT_ACCOUNT_STATE.notEqualsTo(DefaultAccountStatus.Available), // hide only when signed in (a default GitHub account is present); still shown while signed out or before the account state resolves, incl. untrusted workspaces — no auth prompt
-							ChatContextKeys.Setup.completed.negate(),
-							ChatContextKeys.Entitlement.signedOut
-						)
+						when: ContextKeyExpr.false()
 					}
 				});
 			}
@@ -407,17 +401,7 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
 					menu: [{
 						id: MenuId.TitleBarAdjacentCenter,
 						order: 0,
-						when: ContextKeyExpr.and(
-							IsWebContext.negate(),
-							ChatContextKeys.Entitlement.signedOut,
-							CONTEXT_DEFAULT_ACCOUNT_STATE.notEqualsTo(DefaultAccountStatus.Available), // hide only when signed in (a default GitHub account is present); still shown while signed out or before the account state resolves, incl. untrusted workspaces — no auth prompt
-							ChatEntitlementContextKeys.hasByokModels.negate(),
-							ChatContextKeys.Setup.hidden.negate(),
-							ChatContextKeys.Setup.disabledInWorkspace.negate(),
-							ContextKeyExpr.equals(`config.${ChatConfiguration.TitleBarSignInEnabled}`, true),
-							UpdateTitleBarEditorVisibleContext.negate(),
-							InEditorZenModeContext.negate(),
-						),
+						when: ContextKeyExpr.false(),
 					}]
 				});
 			}
@@ -569,9 +553,10 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
 		}
 
 		registerAction2(ChatSetupTriggerAction);
-		registerAction2(ChatSetupTriggerForceSignInDialogAction);
-		registerAction2(ChatSetupFromAccountsAction);
-		registerAction2(ChatSetupSignInTitleBarAction);
+		// Disabled for Ares IDE: Do not register Copilot sign-in prompts in title bar or accounts menu
+		// registerAction2(ChatSetupTriggerForceSignInDialogAction);
+		// registerAction2(ChatSetupFromAccountsAction);
+		// registerAction2(ChatSetupSignInTitleBarAction);
 		registerAction2(ToggleSignInTitleBarAction);
 		registerAction2(ChatSetupTriggerAnonymousWithoutDialogAction);
 		registerAction2(ChatSetupTriggerSupportAnonymousAction);
@@ -677,48 +662,8 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
 	}
 
 	private async checkExtensionInstallation(context: ChatEntitlementContext): Promise<void> {
-
-		// When developing extensions, await registration and then check
-		if (this.environmentService.isExtensionDevelopment) {
-			await this.extensionService.whenInstalledExtensionsRegistered();
-			if (this.extensionService.extensions.find(ext => ExtensionIdentifier.equals(ext.identifier, defaultChat.chatExtensionId))) {
-				context.update({ installed: true, disabled: false, untrusted: false, disabledInWorkspace: false });
-				return;
-			}
-		}
-
-		// Await extensions to be ready to be queried
-		await this.extensionsWorkbenchService.queryLocal();
-
-		// Listen to extensions change and process extensions once
-		this._register(Event.runAndSubscribe<IExtension | undefined>(this.extensionsWorkbenchService.onChange, e => {
-			if (e && !ExtensionIdentifier.equals(e.identifier.id, defaultChat.chatExtensionId)) {
-				return; // unrelated event
-			}
-
-			const defaultChatExtension = this.extensionsWorkbenchService.local.find(value => ExtensionIdentifier.equals(value.identifier.id, defaultChat.chatExtensionId));
-			const installed = !!defaultChatExtension?.local;
-
-			let disabled: boolean;
-			let untrusted = false;
-			let disabledInWorkspace = false;
-			if (installed) {
-				disabled = !this.extensionEnablementService.isEnabled(defaultChatExtension.local);
-				if (disabled) {
-					const state = this.extensionEnablementService.getEnablementState(defaultChatExtension.local);
-					if (state === EnablementState.DisabledByTrustRequirement) {
-						disabled = false; // not disabled by user choice but
-						untrusted = true; // by missing workspace trust
-					} else if (state === EnablementState.DisabledWorkspace) {
-						disabledInWorkspace = true; // disabled at workspace level
-					}
-				}
-			} else {
-				disabled = false;
-			}
-
-			context.update({ installed, disabled, untrusted, disabledInWorkspace });
-		}));
+		// Ares IDE has native core AI built-in; chat is always installed and enabled
+		context.update({ installed: true, disabled: false, untrusted: false, disabledInWorkspace: false });
 	}
 }
 

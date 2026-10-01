@@ -29,6 +29,9 @@ product.overrides.json
 *.tsbuildinfo
 .eslintcache
 .vscode-test
+.vscode-test-web/
+.keys.json
+.env*
 .chat-simulation-data
 vscode-telemetry-docs/
 test-output.json
@@ -54,3 +57,6 @@ dist
 .v[0-9]*/
 # Local agent validation evidence
 .agent-validation/
+
+# Diagnostic and run logs
+*.log

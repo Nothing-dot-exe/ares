@@ -1215,7 +1215,7 @@ export class LanguageModelsService implements ILanguageModelsService {
 				managementCommand: item.managementCommand,
 				deprecation: item.deprecation,
 				when: item.when,
-				isDefault: item.vendor === COPILOT_VENDOR_ID
+				isDefault: item.vendor === COPILOT_VENDOR_ID || item.vendor === 'universal-ai' || item.vendor === 'ares-ai'
 			};
 			this._vendors.set(item.vendor, vendor);
 			addedVendorIds.push(item.vendor);
@@ -1267,7 +1267,15 @@ export class LanguageModelsService implements ILanguageModelsService {
 	}
 
 	lookupLanguageModel(modelIdentifier: string): ILanguageModelChatMetadata | undefined {
-		return this._modelCache.get(modelIdentifier);
+		const direct = this._modelCache.get(modelIdentifier);
+		if (direct) {
+			return direct;
+		}
+		if (modelIdentifier.startsWith('universal-ai/') || modelIdentifier.startsWith('ares-ai/')) {
+			const stripped = modelIdentifier.split('/').slice(1).join('/');
+			return this._modelCache.get(stripped) ?? this._modelCache.get(`universal-ai/${stripped}`) ?? this._modelCache.get(`ares-ai/${stripped}`);
+		}
+		return this._modelCache.get(`universal-ai/${modelIdentifier}`) ?? this._modelCache.get(`ares-ai/${modelIdentifier}`);
 	}
 
 	lookupLanguageModelByQualifiedName(referenceName: string): ILanguageModelChatMetadataAndIdentifier | undefined {
@@ -1497,7 +1505,13 @@ export class LanguageModelsService implements ILanguageModelsService {
 		this._logService.trace('[LM] registering language model provider', vendor, provider);
 
 		if (!this._vendors.has(vendor)) {
-			throw new Error(`Chat model provider uses UNKNOWN vendor ${vendor}.`);
+			if (vendor === 'universal-ai') {
+				this._vendors.set(vendor, { vendor, displayName: 'Universal AI' });
+			} else if (vendor === 'ares-ai') {
+				this._vendors.set(vendor, { vendor, displayName: 'Ares AI' });
+			} else {
+				throw new Error(`Chat model provider uses UNKNOWN vendor ${vendor}.`);
+			}
 		}
 		if (this._providers.has(vendor)) {
 			throw new Error(`Chat model provider for vendor ${vendor} is already registered.`);
@@ -1519,7 +1533,7 @@ export class LanguageModelsService implements ILanguageModelsService {
 	}
 
 	async sendChatRequest(modelId: string, from: ExtensionIdentifier | undefined, messages: IChatMessage[], options: ILanguageModelChatRequestOptions, token: CancellationToken): Promise<ILanguageModelChatResponse> {
-		const metadata = this._modelCache.get(modelId);
+		const metadata = this.lookupLanguageModel(modelId);
 		const provider = this._providers.get(metadata?.vendor || '');
 		if (!provider) {
 			throw new Error(`Chat provider for model ${modelId} is not registered.`);

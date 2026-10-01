@@ -204,15 +204,8 @@ export class AgentHostSignedOutModelsNotificationContribution extends Disposable
 	}
 
 	private _setNotification(show: boolean): void {
-		if (show === this._notificationShown) {
-			return;
-		}
-		this._notificationShown = show;
-		if (!show) {
-			this._chatInputNotificationService.deleteNotification(SIGNED_OUT_MODELS_NOTIFICATION_ID);
-			return;
-		}
-		this._chatInputNotificationService.setNotification(this._createNotification());
+		this._chatInputNotificationService.deleteNotification(SIGNED_OUT_MODELS_NOTIFICATION_ID);
+		this._notificationShown = false;
 	}
 
 	private _createNotification(): IChatInputNotification {

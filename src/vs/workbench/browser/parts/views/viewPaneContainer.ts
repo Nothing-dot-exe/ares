@@ -795,8 +795,9 @@ export class ViewPaneContainer<MementoType extends object = object> extends Comp
 
 			try {
 				pane.render();
-			} catch (error) {
-				this.logService.error(`Fail to render view ${viewDescriptor.id}`, error);
+			} catch (error: any) {
+				console.error(`[FAIL_RENDER_VIEW_STACK] ${viewDescriptor.id}:`, error?.stack || error);
+				this.logService.error(`Fail to render view ${viewDescriptor.id}: ${error?.stack || error}`, error);
 				continue;
 			}
 			if (pane.draggableElement) {

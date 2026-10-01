@@ -1,14 +1,14 @@
 @echo off
 setlocal
 
-title VSCode Dev
+title Ares IDE
 
 pushd %~dp0\..
 
 :: Get electron, compile, built-in extensions
 if "%VSCODE_SKIP_PRELAUNCH%"=="" (
 	node build/lib/preLaunch.ts || (
-		echo Failed to prepare VS Code for launch ^(build/lib/preLaunch.ts^). 1>&2
+		echo Failed to prepare Ares IDE for launch ^(build/lib/preLaunch.ts^). 1>&2
 		goto :failed
 	)
 )
@@ -26,6 +26,13 @@ for /f "tokens=2 delims=:," %%a in ('findstr /R /C:"\"nameShort\":.*" product.js
 set NAMESHORT=%NAMESHORT: "=%
 set NAMESHORT=%NAMESHORT:"=%.exe
 set CODE=".build\electron\%NAMESHORT%"
+if not exist %CODE% (
+	if exist ".build\electron\Ares.exe" (
+		set CODE=".build\electron\Ares.exe"
+	) else if exist ".build\electron\Code - OSS.exe" (
+		set CODE=".build\electron\Code - OSS.exe"
+	)
+)
 
 :: Manage built-in extensions
 if "%~1"=="--builtin" goto builtin
@@ -44,8 +51,8 @@ for %%A in (%*) do (
 	)
 )
 
-:: Launch Code
-%CODE% . %DISABLE_TEST_EXTENSION% %*
+:: Launch Ares (disable broken Microsoft Copilot extensions - Ares AI handles all AI natively in core)
+%CODE% . %DISABLE_TEST_EXTENSION% --disable-extension=vscode.copilot --disable-extension=GitHub.copilot-chat %*
 goto end
 
 :builtin

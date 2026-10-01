@@ -347,70 +347,20 @@ export class ChatStatusBarEntry extends Disposable implements IWorkbenchContribu
 		let kind: StatusbarEntryKind | undefined;
 		let tooltip = this.dashboardTooltip;
 
-		if (isNewUser(this.chatEntitlementService)) {
-			const entitlement = this.chatEntitlementService.entitlement;
+		// Decoupled from Microsoft servers: use standard entry props linked to dashboard
+		const activeLanguageId = this.editorService.activeTextEditorLanguageId;
+		const isEnabled = activeLanguageId
+			? isCompletionsEnabled(this.configurationService, activeLanguageId)
+			: isCompletionsEnabled(this.configurationService, '*');
 
-			// Sign In
-			if (
-				this.chatEntitlementService.sentiment.later ||	// user skipped setup
-				entitlement === ChatEntitlement.Available ||	// user is entitled
-				isProUser(entitlement) ||						// user is already pro
-				entitlement === ChatEntitlement.Free			// user is already free
-			) {
-				return this.getSetupEntryProps();
-			}
+		if (!isEnabled) {
+			text = '$(copilot-unavailable)';
+			ariaLabel = localize('completionsDisabledStatus', "Inline suggestions disabled");
+		} else if (this.completionsService.isSnoozing()) {
+			text = '$(copilot-snooze)';
+			ariaLabel = localize('completionsSnoozedStatus', "Inline suggestions snoozed");
 		} else {
-			const quotas = this.chatEntitlementService.quotas;
-
-			// Disabled
-			if (this.chatEntitlementService.sentiment.disabled || this.chatEntitlementService.sentiment.untrusted) {
-				text = '$(copilot-unavailable)';
-				ariaLabel = localize('copilotDisabledStatus', "Copilot disabled");
-			}
-
-			// Signed out — keep showing Sign-in affordance even when BYOK models are present
-			// so air-gapped users can still authenticate to unlock the full Copilot experience.
-			else if (this.chatEntitlementService.entitlement === ChatEntitlement.Unknown) {
-				return this.getSetupEntryProps();
-			}
-
-			// Quota Exceeded (all tracked plans share the premium chat quota)
-			else if (isTrackedEntitlement(this.chatEntitlementService.entitlement) && isQuotaBlocked(quotas)) {
-				const quotaWarning = localize('chatQuotaExceededStatus', "Quota reached");
-				text = `$(copilot-warning) ${quotaWarning}`;
-				ariaLabel = quotaWarning;
-				kind = 'prominent';
-			}
-
-			// Copilot Resumed (limit reset after the user was previously blocked)
-			else if (this.quotaResumeState === 'resumed') {
-				const resumedLabel = localize('chatResumedStatus', "Copilot Resumed");
-				text = `$(copilot) ${resumedLabel}`;
-				ariaLabel = resumedLabel;
-				kind = 'prominent';
-			}
-
-			// Completions Disabled
-			else if (this.editorService.activeTextEditorLanguageId && !isCompletionsEnabled(this.configurationService, this.editorService.activeTextEditorLanguageId)) {
-				text = '$(copilot-unavailable)';
-				ariaLabel = localize('completionsDisabledStatus', "Inline suggestions disabled");
-			}
-
-			// Completions Snoozed
-			else if (this.completionsService.isSnoozing()) {
-				text = '$(copilot-snooze)';
-				ariaLabel = localize('completionsSnoozedStatus', "Inline suggestions snoozed");
-			}
-
-			else {
-				const promo = this.promo?.getEntryProps(this.layoutService.isVisible(Parts.STATUSBAR_PART, mainWindow)
-					&& this.statusbarService.isEntryVisible('chat.statusBarEntry'));
-				if (promo) {
-					text = promo.showPip ? '$(copilot-dot)' : '$(copilot)';
-					ariaLabel = promo.ariaLabel;
-					tooltip = promo.tooltip;
-				}
-			}
+			text = '$(copilot)';
 		}
 
 		const baseResult = {

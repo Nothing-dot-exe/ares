@@ -36,7 +36,7 @@ export class ChatImplicitContextContribution extends Disposable implements IWork
 
 	private readonly _currentCancelTokenSource: MutableDisposable<CancellationTokenSource>;
 
-	private _implicitContextEnablement: { [mode: string]: string };
+	private _implicitContextEnablement: { [mode: string]: string } = { panel: 'always' };
 
 	constructor(
 		@ICodeEditorService private readonly codeEditorService: ICodeEditorService,
@@ -50,7 +50,7 @@ export class ChatImplicitContextContribution extends Disposable implements IWork
 	) {
 		super();
 		this._currentCancelTokenSource = this._register(new MutableDisposable<CancellationTokenSource>());
-		this._implicitContextEnablement = this.configurationService.getValue<{ [mode: string]: string }>('chat.implicitContext.enabled');
+		this._implicitContextEnablement = this.configurationService.getValue<{ [mode: string]: string }>('chat.implicitContext.enabled') ?? { panel: 'always' };
 
 		const activeEditorDisposables = this._register(new DisposableStore());
 
@@ -117,7 +117,7 @@ export class ChatImplicitContextContribution extends Disposable implements IWork
 		}));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration('chat.implicitContext.enabled')) {
-				this._implicitContextEnablement = this.configurationService.getValue<{ [mode: string]: string }>('chat.implicitContext.enabled');
+				this._implicitContextEnablement = this.configurationService.getValue<{ [mode: string]: string }>('chat.implicitContext.enabled') ?? { panel: 'always' };
 				this.updateImplicitContext();
 			}
 		}));
@@ -126,7 +126,7 @@ export class ChatImplicitContextContribution extends Disposable implements IWork
 			if (!widget?.input.implicitContext) {
 				return;
 			}
-			if (this._implicitContextEnablement[widget.location] === 'first' && widget.viewModel?.getItems().length !== 0) {
+			if (this._implicitContextEnablement?.[widget.location] === 'first' && widget.viewModel?.getItems().length !== 0) {
 				widget.input.implicitContext.setValues([]);
 			}
 		}));
@@ -286,7 +286,7 @@ export class ChatImplicitContextContribution extends Disposable implements IWork
 			if (!widget.input.implicitContext) {
 				continue;
 			}
-			const setting = this._implicitContextEnablement[widget.location];
+			const setting = (this._implicitContextEnablement || { panel: 'always' })[widget.location] ?? 'always';
 			const isFirstInteraction = widget.viewModel?.getItems().length === 0;
 			if ((setting === 'always' || setting === 'first' && isFirstInteraction)) {
 				// When there's a non-code active editor (e.g. Settings is open), preserve
