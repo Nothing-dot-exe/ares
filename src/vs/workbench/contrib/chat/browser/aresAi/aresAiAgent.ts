@@ -5,6 +5,7 @@
 
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
+import { removeAnsiEscapeCodes } from '../../../../../base/common/strings.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { basename, joinPath } from '../../../../../base/common/resources.js';
@@ -18,14 +19,22 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IChatProgress } from '../../common/chatService/chatService.js';
 import { IChatAgentHistoryEntry, IChatAgentImplementation, IChatAgentRequest, IChatAgentResult } from '../../common/participants/chatAgents.js';
 import { ILanguageModelToolsService } from '../../common/tools/languageModelToolsService.js';
-import { TerminalToolId } from '../../common/tools/terminalToolIds.js';
-import { ITerminalService } from '../../../terminal/browser/terminal.js';
+import { ITerminalInstance, ITerminalService } from '../../../terminal/browser/terminal.js';
 import { IChatRequestVariableEntry } from '../../common/attachments/chatVariableEntries.js';
 import { IAresAiKeyManager } from './aresAiKeyManager.js';
 import { findProviderForModel, streamChatCompletion } from './aresAiClient.js';
 import { ARES_AI_PROVIDERS, IAresAiMessage } from './aresAiTypes.js';
 
+interface IExtractedToolCall {
+	name: string;
+	args: Record<string, any>;
+	raw: string;
+}
+
 export class AresAiAgent implements IChatAgentImplementation {
+
+	private _aresBackgroundTerminal: ITerminalInstance | undefined;
+	private _aresBackgroundTerminalReady: Promise<void> | undefined;
 
 	constructor(
 		@IAresAiKeyManager private readonly _keyManager: IAresAiKeyManager,
@@ -85,12 +94,17 @@ export class AresAiAgent implements IChatAgentImplementation {
 			progress([{
 				kind: 'markdownContent',
 				content: new MarkdownString(
-					`### 🏛️ Ares AI — Native Core Capabilities\n\n` +
-					`| Command / Feature | Syntax / Trigger | Description |\n` +
+					`### 🏛️ Ares AI — Native Core Autonomous Capabilities\n\n` +
+					`| Capability | Trigger / Usage | Description |\n` +
 					`| :--- | :--- | :--- |\n` +
-					`| **Autonomous Agent** | Default / Agent Mode | Multi-step reasoning, file generation, tool execution. |\n` +
-					`| **Terminal Execution** | \`/terminal <cmd>\` | Runs commands in integrated terminal live. |\n` +
-					`| **Surgical Editing** | \`/edit <request>\` | Search & replace patching on active files. |\n` +
+					`| **Autonomous ReAct Loop** | Default | Multi-step reasoning, active tool use, and validation. |\n` +
+					`| **Live Terminal Execution** | \`run_command\` / \`/terminal\` | Executes shell commands live in terminal & reads output. |\n` +
+					`| **Live Web Search** | \`web_search <query>\` | Searches the live internet for docs, packages, and answers. |\n` +
+					`| **Web Page Fetcher** | \`fetch_web_page <url>\` | Reads live documentation, tutorials, and web pages directly. |\n` +
+					`| **File Inspection** | \`read_file\` | Reads file lines with precise line-range slicing. |\n` +
+					`| **Code Creation** | \`write_file\` | Writes full files and opens them in the editor. |\n` +
+					`| **Surgical Patching** | \`edit_file\` / \`/edit\` | Search-and-replace patching on existing code. |\n` +
+					`| **Workspace Exploration** | \`list_dir\`, \`grep_search\` | Lists directories and searches regex patterns. |\n` +
 					`| **Architecture Planner** | \`/plan <goal>\` | High-level decomposition and implementation roadmap. |\n` +
 					`| **Clear Session** | \`/clear\` | Reset multi-turn conversation memory. |\n\n` +
 					`#### ⚡ Available Providers & Models\n` +
@@ -109,24 +123,12 @@ export class AresAiAgent implements IChatAgentImplementation {
 		if (request.command === 'plan') {
 			commandModifier = '\n[MODE: ARCHITECTURAL PLANNER - Provide a clear, phase-by-phase implementation plan and task decomposition before writing code.]\n';
 		} else if (request.command === 'edit') {
-			commandModifier = '\n[MODE: SURGICAL FILE EDITOR - Focus exclusively on outputting <<<<<<< SEARCH ... ======= ... >>>>>>> blocks for existing code files.]\n';
+			commandModifier = '\n[MODE: SURGICAL FILE EDITOR - Focus exclusively on inspecting and applying search/replace edits to existing files.]\n';
 		} else if (request.command === 'terminal') {
-			commandModifier = '\n[MODE: TERMINAL EXECUTION - Output [run_in_terminal(command="...")] to execute necessary commands directly.]\n';
+			commandModifier = '\n[MODE: TERMINAL EXECUTION - Execute terminal commands using run_command to complete the user goal.]\n';
 		}
 
-		const workspaceFolder = this._workspaceContextService.getWorkspace().folders[0];
-		const resolveWorkspaceUri = (targetPath: string): URI | undefined => {
-			let clean = (targetPath || '').trim().replace(/^['"]|['"]$/g, '');
-			if (clean.startsWith('/tmp/')) clean = clean.slice(5);
-			else if (clean.startsWith('tmp/')) clean = clean.slice(4);
-
-			if (workspaceFolder) {
-				return joinPath(workspaceFolder.uri, clean);
-			}
-			return URI.file(clean);
-		};
-
-		// 1. Gather Active Editor Context & Selection (Milestone 3)
+		// 1. Gather Active Editor Context & Selection
 		let editorContext = '';
 		try {
 			const activeCodeEditor = this._codeEditorService.getActiveCodeEditor();
@@ -150,7 +152,7 @@ export class AresAiAgent implements IChatAgentImplementation {
 			this._logService.debug('[AresAiAgent] Error resolving active editor context:', e);
 		}
 
-		// 2. Gather Attached Files and Variables (#file attachments) (Milestone 3)
+		// 2. Gather Attached Files and Variables (#file attachments)
 		let attachmentContext = '';
 		if (request.variables && Array.isArray(request.variables.variables)) {
 			for (const v of request.variables.variables) {
@@ -171,52 +173,54 @@ export class AresAiAgent implements IChatAgentImplementation {
 			}
 		}
 
-		const systemPrompt = `You are Ares AI, the intelligent autonomous coding assistant built directly into Ares IDE core.
-You have direct autonomous capabilities inside the editor, workspace, and terminal:
+		const systemPrompt = `You are Ares AI, the autonomous pair-programming AI agent built directly into Ares IDE core.
+You have direct, hands-on capabilities inside the editor, workspace, and terminal:
 
-1. CREATING COMPLETE CODE & WEBSITES:
-   Always generate 100% COMPLETE, production-ready code. Never omit code or leave placeholders.
-   Format files in standard markdown code blocks with the file path after the language tag:
-   \`\`\`html:index.html
-   <!DOCTYPE html>
-   ...
-   \`\`\`
-   \`\`\`css:style.css
-   ...
-   \`\`\`
-   \`\`\`javascript:script.js
-   ...
-   \`\`\`
+### 🛠️ AVAILABLE TOOLS
+You can invoke tools at any point by outputting a structured tool call.
+Supported format:
+<tool_call>
+{"name": "tool_name", "arguments": {"param1": "value1"}}
+</tool_call>
 
-2. SURGICAL FILE EDITING (PATCHING):
-   To update or edit existing files, specify the file name and provide search/replace blocks:
-   ### \`path/to/file.ext\`
-   <<<<<<< SEARCH
-   original code to replace
-   =======
-   new replacement code
-   >>>>>>>
+Tools available:
+1. \`run_command\`:
+   Execute any command headlessly in the background terminal and receive the real stdout/stderr output directly inside chat.
+   Arguments: {"command": "dir"} or {"command": "npm test"} or {"command": "git status"}
+2. \`read_file\`:
+   Read a workspace file's content with optional line slicing.
+   Arguments: {"path": "src/index.ts", "startLine": 1, "endLine": 100}
+3. \`write_file\`:
+   Create or overwrite a file in the workspace and open it in an editor tab.
+   Arguments: {"path": "src/calculator.ts", "content": "..."}
+4. \`edit_file\`:
+   Surgically replace a unique block of text in an existing file.
+   Arguments: {"path": "src/index.ts", "search": "old code block", "replace": "new code block"}
+5. \`list_dir\`:
+   List all files and subdirectories in a directory with file sizes.
+   Arguments: {"path": "."} or {"path": "src"}
+6. \`grep_search\`:
+   Search for a string or regex pattern across workspace files.
+   Arguments: {"query": "export function", "path": "."}
+7. \`web_search\`:
+   Search the live internet for documentation, current library APIs, packages, error troubleshooting, or real-time info.
+   Arguments: {"query": "how to use electron ipcRenderer in typescript"}
+8. \`fetch_web_page\`:
+   Fetch and read the live text content of any public URL or documentation page.
+   Arguments: {"url": "https://nodejs.org/api/fs.html"}
 
-3. EXECUTING TERMINAL COMMANDS:
-   To run commands, install dependencies, compile, or start dev servers:
-   [run_in_terminal(command='npm install')]
-   or
-   \`\`\`bash:run
-   npm run build
-   \`\`\`
-   Ares IDE will immediately execute the command in the built-in terminal!
+### 🤖 AUTONOMOUS AGENT PROTOCOL
+- ACTION FIRST: If the user asks to run a command, test code, list files, debug an error, or search the web, DO NOT just give instructions—CALL THE TOOL and execute it yourself!
+- LIVE INTERNET ACCESS: You have full access to search the internet and fetch web pages. Use web_search whenever you need up-to-date documentation, external libraries, or solutions to errors!
+- MULTI-STEP REASONING: After each tool execution, you will receive the exact tool output. Use it to verify the results, fix errors, or proceed to the next step.
+- COMPLETE CODE: When writing code, provide 100% complete, working files. Never leave TODOs, placeholders, or omitted blocks.
+- HEADLESS BACKGROUND SHELL: When you run a command via \`run_command\`, it executes headlessly in the background and the console output is rendered directly inside chat. The IDE terminal panel will not pop open. You can execute builds, tests, git commands, and shell scripts effortlessly.`;
 
-4. CREATING DIRECTORIES:
-   [create_directory(dirPath='my_folder')]
-
-Ares IDE core automatically extracts all your tool actions and applies them live!`;
-
-		// 3. Build Multi-Turn Conversation History (Milestone 1)
+		// 3. Build Multi-Turn Conversation History
 		const messages: IAresAiMessage[] = [
 			{ role: 'system', content: systemPrompt }
 		];
 
-		// Unpack past history entries (request + response)
 		if (Array.isArray(history) && history.length > 0) {
 			for (const entry of history) {
 				const userText = entry.request?.message;
@@ -242,7 +246,7 @@ Ares IDE core automatically extracts all your tool actions and applies them live
 			}
 		}
 
-		// Prune oldest turns if conversation grows too long (keep system + last 18 turns)
+		// Prune oldest turns if conversation grows too long
 		if (messages.length > 20) {
 			const systemMsg = messages[0];
 			const recentTurns = messages.slice(-18);
@@ -250,247 +254,198 @@ Ares IDE core automatically extracts all your tool actions and applies them live
 			messages.push(systemMsg, ...recentTurns);
 		}
 
-		// Append the active user prompt with command modifier, editor & attachment context
+		// Append the active user prompt with context
 		const effectiveUserPrompt = request.message + commandModifier + editorContext + attachmentContext;
 		messages.push({ role: 'user', content: effectiveUserPrompt });
 
-		this._logService.trace(`[AresAiAgent] Invoking ${providerName} (${modelId}) with ${messages.length} message turns.`);
+		this._logService.trace(`[AresAiAgent] Starting autonomous loop with ${providerName} (${modelId}).`);
 
-		let fullContent = '';
-		let isThinking = false;
+		// ==========================================================
+		// 4. AUTONOMOUS ReAct (REASON + ACT) MULTI-STEP AGENT LOOP
+		// ==========================================================
+		const MAX_STEPS = 10;
+		let currentStep = 0;
 
 		try {
-			await streamChatCompletion(
-				providerName,
-				apiKey,
-				modelId,
-				messages,
-				({ content, reasoning }) => {
-					if (reasoning) {
-						if (!isThinking) {
-							progress([{ kind: 'markdownContent', content: new MarkdownString(`\n> *Thinking...*\n> `) }]);
-							isThinking = true;
+			while (currentStep < MAX_STEPS && !token.isCancellationRequested) {
+				currentStep++;
+
+				let turnContent = '';
+				let isThinking = false;
+
+				await streamChatCompletion(
+					providerName,
+					apiKey,
+					modelId,
+					messages,
+					({ content, reasoning }) => {
+						if (reasoning) {
+							if (!isThinking) {
+								progress([{ kind: 'markdownContent', content: new MarkdownString(`\n> *Thinking...*\n> `) }]);
+								isThinking = true;
+							}
+							progress([{ kind: 'markdownContent', content: new MarkdownString(reasoning.replace(/\n/g, '\n> ')) }]);
 						}
-						progress([{ kind: 'markdownContent', content: new MarkdownString(reasoning.replace(/\n/g, '\n> ')) }]);
-					}
-					if (content) {
-						fullContent += content;
-						if (isThinking) {
-							progress([{ kind: 'markdownContent', content: new MarkdownString(`\n\n---\n\n`) }]);
-							isThinking = false;
-						}
-						if (!content.includes('<|tool_call_start|>') && !content.includes('<|tool_call_end|>')) {
-							progress([{ kind: 'markdownContent', content: new MarkdownString(content) }]);
-						}
-					}
-				},
-				token,
-				customBaseUrl
-			);
-
-			// ==========================================================
-			// 4. AUTONOMOUS TOOL & WORKSPACE EXECUTION (Milestones 1 & 2)
-			// ==========================================================
-
-			// A. Extract & Execute Terminal Commands (RunInTerminalTool / ITerminalService)
-			const terminalCommands: string[] = [];
-			const cmdRegex = /(?:\[run_in_terminal\s*\(\s*(?:command|cmd)?\s*=?\s*['"]?([^'")\]]+)['"]?\s*\)\])|(?:\[execute_command\s*\(\s*(?:command|cmd)?\s*=?\s*['"]?([^'")\]]+)['"]?\s*\)\])/gi;
-			for (const cm of fullContent.matchAll(cmdRegex)) {
-				const cmd = cm[1] || cm[2];
-				if (cmd && cmd.trim()) terminalCommands.push(cmd.trim());
-			}
-
-			// Also capture code blocks marked with bash:run / sh:run / powershell:run
-			const runCodeBlockRegex = /```(?:bash|sh|powershell|cmd):run\s*\n([\s\S]*?)```/gi;
-			for (const rm of fullContent.matchAll(runCodeBlockRegex)) {
-				if (rm[1] && rm[1].trim()) {
-					terminalCommands.push(rm[1].trim());
-				}
-			}
-
-			if (terminalCommands.length > 0) {
-				for (const cmd of terminalCommands) {
-					try {
-						progress([{
-							kind: 'markdownContent',
-							content: new MarkdownString(`\n\n> ⚡ **Executing Terminal Command:** \`${cmd}\`\n\n`)
-						}]);
-
-						// 1. Dispatch through ILanguageModelToolsService if RunInTerminal is available
-						const runInTerminalTool = this._toolsService.getTool(TerminalToolId.RunInTerminal) || this._toolsService.getTool('run_in_terminal');
-						if (runInTerminalTool) {
-							await this._toolsService.invokeTool({
-								callId: generateUuid(),
-								toolId: runInTerminalTool.id,
-								parameters: {
-									command: cmd,
-									explanation: `Ares AI executing: ${cmd}`,
-									mode: 'sync'
-								},
-								context: {
-									sessionResource: request.sessionResource,
-									requestId: request.requestId,
-									workingDirectory: workspaceFolder?.uri
-								}
-							}, async () => 0, token);
-						}
-
-						// 2. Also ensure terminal is visibly revealed and command is executed in live terminal
-						const terminalInstance = await this._terminalService.getActiveOrCreateInstance();
-						if (terminalInstance) {
-							await this._terminalService.revealTerminal(terminalInstance, false);
-							terminalInstance.sendText(cmd, true);
-						}
-					} catch (e: any) {
-						this._logService.warn(`[AresAiAgent] Error running terminal command "${cmd}":`, e);
-					}
-				}
-			}
-
-			// B. Extract & Execute Surgical File Edits (EditTool / Search-and-Replace)
-			const editFileBlocks: { targetFile: string; search: string; replace: string }[] = [];
-			const patchRegex = /(?:###?\s*`?([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)`?[\s\S]*?)?<{7}\s*SEARCH\s*\n([\s\S]*?)\n={7}\s*\n([\s\S]*?)\n>{7}/gi;
-			let patchMatch: RegExpExecArray | null;
-			while ((patchMatch = patchRegex.exec(fullContent)) !== null) {
-				let targetFile = (patchMatch[1] || '').trim();
-				const searchBlock = patchMatch[2];
-				const replaceBlock = patchMatch[3];
-
-				if (!targetFile) {
-					// Fall back to active editor file if known
-					const activeEditor = this._codeEditorService.getActiveCodeEditor();
-					if (activeEditor?.getModel()) {
-						targetFile = basename(activeEditor.getModel()!.uri);
-					}
-				}
-
-				if (targetFile && searchBlock) {
-					editFileBlocks.push({ targetFile, search: searchBlock, replace: replaceBlock });
-				}
-			}
-
-			for (const edit of editFileBlocks) {
-				try {
-					const fileUri = resolveWorkspaceUri(edit.targetFile);
-					if (fileUri) {
-						const exists = await this._fileService.exists(fileUri);
-						if (exists) {
-							const existingContent = (await this._fileService.readFile(fileUri)).value.toString();
-							if (existingContent.includes(edit.search)) {
-								const patched = existingContent.replace(edit.search, edit.replace);
-								await this._fileService.writeFile(fileUri, VSBuffer.fromString(patched));
-								progress([{
-									kind: 'markdownContent',
-									content: new MarkdownString(`\n\n> ✏️ **Patched File:** \`${edit.targetFile}\` via surgical edit.\n\n`)
-								}]);
-							} else {
-								this._logService.warn(`[AresAiAgent] Search block not found in ${edit.targetFile}`);
+						if (content) {
+							turnContent += content;
+							if (isThinking) {
+								progress([{ kind: 'markdownContent', content: new MarkdownString(`\n\n---\n\n`) }]);
+								isThinking = false;
+							}
+							// Only stream text if it's not inside a raw <tool_call> block
+							if (!content.includes('<tool_call>') && !content.includes('```tool:')) {
+								progress([{ kind: 'markdownContent', content: new MarkdownString(content) }]);
 							}
 						}
-					}
-				} catch (e: any) {
-					this._logService.warn(`[AresAiAgent] Could not apply edit to ${edit.targetFile}:`, e);
-				}
-			}
+					},
+					token,
+					customBaseUrl
+				);
 
-			// C. Extract & Create Directories
-			const extractedDirs: string[] = [];
-			const dirCalls = fullContent.matchAll(/(?:create_directory|create_folder|mkdir)\s*\(\s*(?:dirPath|path)?\s*=?\s*['"]?([^\s'")]+)['"]?\s*\)/gi);
-			for (const dm of dirCalls) {
-				if (dm[1]) extractedDirs.push(dm[1].trim());
-			}
-
-			const nlDir = request.message.match(/(?:create|make|mkdir|build)\s+(?:a\s+|one\s+)?(?:folder|directory|dir)\s+(?:called|named\s+)?['"]?([a-zA-Z0-9_\-\.\/]+)['"]?/i);
-			if (nlDir && nlDir[1] && !['called', 'named', 'a', 'one', 'folder', 'directory'].includes(nlDir[1].toLowerCase())) {
-				extractedDirs.push(nlDir[1].trim());
-			}
-
-			const uniqueDirs = [...new Set(extractedDirs)];
-			for (const dirName of uniqueDirs) {
-				try {
-					const dirUri = resolveWorkspaceUri(dirName);
-					if (dirUri) {
-						await this._fileService.createFolder(dirUri);
-						progress([{
-							kind: 'markdownContent',
-							content: new MarkdownString(`\n\n> 📁 **Created Directory:** \`${basename(dirUri)}\` in workspace via \`IFileService\`.\n\n`)
-						}]);
-					}
-				} catch (e: any) {
-					this._logService.warn(`[AresAiAgent] Could not create directory ${dirName}:`, e);
-				}
-			}
-
-			// D. Extract & Create Full Code Files
-			const extractedFiles: { path: string; content: string }[] = [];
-			const codeBlockRegex = /```([a-zA-Z0-9_\-]*)(?:[:\s]+([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+))?\s*\n([\s\S]*?)```/g;
-			let cbMatch: RegExpExecArray | null;
-			while ((cbMatch = codeBlockRegex.exec(fullContent)) !== null) {
-				const lang = (cbMatch[1] || '').trim().toLowerCase();
-				let fileName = (cbMatch[2] || '').trim();
-				const code = cbMatch[3];
-
-				if (!fileName) {
-					const preceding = fullContent.slice(Math.max(0, cbMatch.index - 120), cbMatch.index);
-					const preMatch = preceding.match(/(?:###?|File:|Filename:|\*\*)\s*`?([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)`?/i);
-					if (preMatch && preMatch[1]) {
-						fileName = preMatch[1].trim();
-					}
+				if (token.isCancellationRequested) {
+					break;
 				}
 
-				if (!fileName && code) {
-					const firstLine = code.split('\n')[0].trim();
-					const commentMatch = firstLine.match(/^(?:<!--|\/\/|\/\*|#)\s*([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)/i);
-					if (commentMatch && commentMatch[1]) {
-						fileName = commentMatch[1].trim();
-					}
+				// Extract any tool calls from this turn
+				const toolCalls = this._extractToolCalls(turnContent);
+
+				// If no tool calls were requested, handle any passive code/edit blocks and finish
+				if (toolCalls.length === 0) {
+					await this._handlePassiveCodeBlocks(turnContent, progress, token);
+					break;
 				}
 
-				if (!fileName) {
-					if (lang === 'html') fileName = 'index.html';
-					else if (lang === 'css') fileName = 'style.css';
-					else if (lang === 'javascript' || lang === 'js') fileName = 'script.js';
-					else if (lang === 'json' && code.includes('"name"')) fileName = 'package.json';
-					else if (lang === 'python' || lang === 'py') fileName = 'app.py';
-				}
+				// Record the assistant's message in the conversation history
+				messages.push({ role: 'assistant', content: turnContent });
 
-				if (fileName && code && code.trim().length > 0 && !fileName.endsWith(':run')) {
-					const cleanPath = basename(URI.file(fileName));
-					const existing = extractedFiles.find(f => f.path.toLowerCase() === cleanPath.toLowerCase());
-					if (existing) {
-						existing.content = code;
-					} else {
-						extractedFiles.push({ path: cleanPath, content: code });
-					}
-				}
-			}
+				// Execute each tool call and collect results
+				for (const tool of toolCalls) {
+					if (token.isCancellationRequested) break;
 
-			let primaryFileUri: URI | undefined = undefined;
-			for (const file of extractedFiles) {
-				try {
-					const fileUri = resolveWorkspaceUri(file.path);
-					if (fileUri) {
-						await this._fileService.writeFile(fileUri, VSBuffer.fromString(file.content));
-						const lineCount = file.content.split('\n').length;
-						progress([{
-							kind: 'markdownContent',
-							content: new MarkdownString(`\n\n> 📄 **Created File:** \`${file.path}\` (${lineCount} lines) in workspace via \`IFileService\`.\n\n`)
-						}]);
-						if (!primaryFileUri || file.path === 'index.html' || file.path.endsWith('.html')) {
-							primaryFileUri = fileUri;
+					const toolLabel = (tool.name === 'run_command' || tool.name === 'run_in_terminal' || tool.name === 'execute_command')
+						? `running \`${tool.args.command || tool.args.cmd || ''}\` in background terminal`
+						: (tool.name === 'web_search' || tool.name === 'search_web')
+						? `searching the web for "${tool.args.query || ''}"`
+						: (tool.name === 'fetch_web_page' || tool.name === 'read_url' || tool.name === 'fetch_page')
+						? `fetching web page "${tool.args.url || ''}"`
+						: `${tool.name} (${tool.args.path || tool.args.query || tool.args.url || ''})`;
+
+					progress([{
+						kind: 'progressMessage',
+						content: new MarkdownString(`⚡ Ares AI ${toolLabel}...`),
+						shimmer: true
+					}]);
+
+					let toolResult = '';
+					try {
+						switch (tool.name) {
+							case 'run_command':
+							case 'run_in_terminal':
+							case 'execute_command':
+								toolResult = await this._executeTerminalCommand(tool.args.command || tool.args.cmd || '', request, token);
+								break;
+							case 'web_search':
+							case 'search_web':
+								toolResult = await this._webSearch(tool.args.query || tool.args.q || '', token);
+								break;
+							case 'fetch_web_page':
+							case 'read_url':
+							case 'fetch_page':
+								toolResult = await this._fetchWebPage(tool.args.url || tool.args.link || '', token);
+								break;
+							case 'read_file':
+								toolResult = await this._readFile(tool.args.path || tool.args.filePath || '', tool.args.startLine, tool.args.endLine);
+								break;
+							case 'write_file':
+							case 'create_file':
+								toolResult = await this._writeFile(tool.args.path || tool.args.filePath || '', tool.args.content || '');
+								break;
+							case 'edit_file':
+							case 'patch_file':
+								toolResult = await this._editFile(tool.args.path || tool.args.filePath || '', tool.args.search || '', tool.args.replace || '');
+								break;
+							case 'list_dir':
+							case 'list_directory':
+								toolResult = await this._listDir(tool.args.path || tool.args.dirPath);
+								break;
+							case 'grep_search':
+							case 'search_code':
+								toolResult = await this._grepSearch(tool.args.query || '', tool.args.path || tool.args.searchPath);
+								break;
+							default:
+								toolResult = `Error: Unknown tool "${tool.name}". Available tools: run_command, web_search, fetch_web_page, read_file, write_file, edit_file, list_dir, grep_search.`;
 						}
+					} catch (err: any) {
+						toolResult = `Error executing ${tool.name}: ${err.message}`;
 					}
-				} catch (e: any) {
-					this._logService.warn(`[AresAiAgent] Could not write file ${file.path}:`, e);
-				}
-			}
 
-			// Open primary created file in editor tab
-			if (primaryFileUri) {
-				try {
-					await this._editorService.openEditor({ resource: primaryFileUri });
-				} catch (e) {
-					this._logService.warn('[AresAiAgent] Could not open editor for file:', e);
+					// Display tool output snippet directly in chat (console block for commands)
+					if (tool.name === 'run_command' || tool.name === 'run_in_terminal' || tool.name === 'execute_command') {
+						const cmd = (tool.args.command || tool.args.cmd || '').trim();
+						const displayOutput = toolResult.length > 2000 ? toolResult.slice(0, 2000) + '\n... (output truncated for chat view)' : toolResult;
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n\`\`\`console\n$ ${cmd}\n${displayOutput}\n\`\`\`\n\n`)
+						}]);
+					} else if (tool.name === 'web_search' || tool.name === 'search_web') {
+						const q = tool.args.query || tool.args.q || '';
+						const display = toolResult.length > 700 ? toolResult.slice(0, 700) + '\n... (truncated)' : toolResult;
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n> 🌐 **Web Search:** \`${q}\`\n\`\`\`markdown\n${display}\n\`\`\`\n\n`)
+						}]);
+					} else if (tool.name === 'fetch_web_page' || tool.name === 'read_url' || tool.name === 'fetch_page') {
+						const url = tool.args.url || tool.args.link || '';
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n> 📄 **Fetched URL:** [${url}](${url}) (${toolResult.length} characters)\n\n`)
+						}]);
+					} else if (tool.name === 'read_file') {
+						const filePath = tool.args.path || tool.args.filePath || '';
+						const lineCount = toolResult.split('\n').length;
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n> 📖 **Read File:** \`${filePath}\` (${lineCount} lines)\n\n`)
+						}]);
+					} else if (tool.name === 'write_file' || tool.name === 'create_file') {
+						const filePath = tool.args.path || tool.args.filePath || '';
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n> ✏️ **Wrote File:** \`${filePath}\`\n\n`)
+						}]);
+					} else if (tool.name === 'edit_file' || tool.name === 'patch_file') {
+						const filePath = tool.args.path || tool.args.filePath || '';
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n> 📝 **Edited File:** \`${filePath}\`\n\n`)
+						}]);
+					} else if (tool.name === 'list_dir' || tool.name === 'list_directory') {
+						const dirPath = tool.args.path || tool.args.dirPath || '.';
+						const display = toolResult.length > 500 ? toolResult.slice(0, 500) + '\n... (truncated)' : toolResult;
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n> 📁 **Directory Listing:** \`${dirPath}\`\n\`\`\`\n${display}\n\`\`\`\n\n`)
+						}]);
+					} else if (tool.name === 'grep_search' || tool.name === 'search_code') {
+						const q = tool.args.query || '';
+						const display = toolResult.length > 600 ? toolResult.slice(0, 600) + '\n... (truncated)' : toolResult;
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n> 🔍 **Code Search:** \`${q}\`\n\`\`\`\n${display}\n\`\`\`\n\n`)
+						}]);
+					} else {
+						const preview = toolResult.length > 400 ? toolResult.slice(0, 400) + '\n... (truncated)' : toolResult;
+						progress([{
+							kind: 'markdownContent',
+							content: new MarkdownString(`\n\n> 🛠️ **${tool.name} Output:**\n\`\`\`\n${preview}\n\`\`\`\n\n`)
+						}]);
+					}
+
+					// Feed the tool result back into the prompt for the next turn
+					messages.push({
+						role: 'user',
+						content: `[Tool Result for ${tool.name}]:\n${toolResult}`
+					});
 				}
 			}
 
@@ -505,5 +460,505 @@ Ares IDE core automatically extracts all your tool actions and applies them live
 		}
 
 		return {};
+	}
+
+	// ==========================================================
+	// 5. TOOL IMPLEMENTATIONS
+	// ==========================================================
+
+	/**
+	 * Gets or spawns a dedicated, headless background terminal for Ares AI.
+	 * Configured with hideFromUser: true so the IDE's bottom terminal panel never opens.
+	 */
+	private async _getOrCreateAresBackgroundTerminal(): Promise<ITerminalInstance | undefined> {
+		if (this._aresBackgroundTerminal && !this._aresBackgroundTerminal.isDisposed) {
+			return this._aresBackgroundTerminal;
+		}
+
+		try {
+			const workspaceFolder = this._workspaceContextService.getWorkspace().folders[0];
+			const terminal = await this._terminalService.createTerminal({
+				config: {
+					name: 'Ares AI Background Agent',
+					hideFromUser: true,
+					isFeatureTerminal: true,
+					cwd: workspaceFolder?.uri
+				},
+				cwd: workspaceFolder?.uri
+			});
+
+			if (!terminal) {
+				return undefined;
+			}
+
+			this._aresBackgroundTerminal = terminal;
+			terminal.onDisposed(() => {
+				if (this._aresBackgroundTerminal === terminal) {
+					this._aresBackgroundTerminal = undefined;
+					this._aresBackgroundTerminalReady = undefined;
+				}
+			});
+
+			// Await process readiness and allow initial shell prompt/banner to flush
+			this._aresBackgroundTerminalReady = terminal.processReady.then(() => {
+				return new Promise<void>(resolve => setTimeout(resolve, 400));
+			});
+
+			await this._aresBackgroundTerminalReady;
+			return terminal;
+		} catch (e) {
+			this._logService.error('[Ares AI] Failed to initialize background terminal:', e);
+			return undefined;
+		}
+	}
+
+	/**
+	 * Executes a shell command headlessly inside Ares AI's dedicated background terminal,
+	 * waits for output to settle (idle silence), and captures clean stdout/stderr.
+	 * The IDE's visible terminal panel is never opened or disturbed.
+	 */
+	private async _executeTerminalCommand(command: string, request: IChatAgentRequest, token: CancellationToken): Promise<string> {
+		if (!command || !command.trim()) {
+			return 'Error: No command provided to run_command.';
+		}
+
+		const terminal = await this._getOrCreateAresBackgroundTerminal();
+		if (!terminal) {
+			return 'Error: Could not initialize Ares AI background terminal.';
+		}
+
+		return new Promise<string>((resolve) => {
+			let output = '';
+			let idleTimer: any = null;
+			let maxTimer: any = null;
+			let isResolved = false;
+
+			const cleanUp = () => {
+				if (idleTimer) clearTimeout(idleTimer);
+				if (maxTimer) clearTimeout(maxTimer);
+				dataListener.dispose();
+			};
+
+			const finish = () => {
+				if (isResolved) return;
+				isResolved = true;
+				cleanUp();
+
+				// Strip ANSI codes and carriage returns
+				let clean = removeAnsiEscapeCodes(output)
+					.replace(/\r\n/g, '\n')
+					.replace(/\r/g, '\n')
+					.trim();
+
+				// Remove echoed command line if present at beginning of output
+				const trimmedCmd = command.trim();
+				if (clean.startsWith(trimmedCmd)) {
+					clean = clean.slice(trimmedCmd.length).trim();
+				}
+
+				resolve(clean.length > 0 ? clean : '(Command completed with no terminal output)');
+			};
+
+			const dataListener = terminal.onData(data => {
+				output += data;
+				if (idleTimer) clearTimeout(idleTimer);
+				// If no new data arrives for 850ms, assume command execution finished
+				idleTimer = setTimeout(finish, 850);
+			});
+
+			// Max timeout: 30 seconds for long interactive commands
+			maxTimer = setTimeout(finish, 30000);
+
+			if (token.isCancellationRequested) {
+				cleanUp();
+				resolve('(Command cancelled by user)');
+				return;
+			}
+
+			token.onCancellationRequested(() => {
+				if (!isResolved) {
+					isResolved = true;
+					cleanUp();
+					resolve(output ? removeAnsiEscapeCodes(output).trim() : '(Command cancelled by user)');
+				}
+			});
+
+			// Send command to headless background terminal
+			terminal.sendText(command, true);
+
+			// Initial idle fallback (gives initial 2.5s for command to execute/settle)
+			idleTimer = setTimeout(finish, 2500);
+		});
+	}
+
+	/**
+	 * Reads file content from the workspace with line numbers and optional slicing.
+	 */
+	private async _readFile(filePath: string, startLine?: number, endLine?: number): Promise<string> {
+		const fileUri = this._resolveWorkspaceUri(filePath);
+		if (!fileUri) {
+			return `Error: Could not resolve path "${filePath}" in workspace.`;
+		}
+		try {
+			const exists = await this._fileService.exists(fileUri);
+			if (!exists) {
+				return `Error: File "${filePath}" does not exist.`;
+			}
+			const fileBuffer = await this._fileService.readFile(fileUri);
+			const text = fileBuffer.value.toString();
+			const lines = text.split('\n');
+
+			if (startLine !== undefined && endLine !== undefined) {
+				const start = Math.max(1, startLine) - 1;
+				const end = Math.min(lines.length, endLine);
+				const sliced = lines.slice(start, end).map((l, i) => `${start + i + 1}: ${l}`).join('\n');
+				return `File: ${filePath} (lines ${start + 1}-${end} of ${lines.length}):\n${sliced}`;
+			}
+
+			if (text.length > 60000) {
+				return `File: ${filePath} (first 500 lines shown):\n` + lines.slice(0, 500).map((l, i) => `${i + 1}: ${l}`).join('\n');
+			}
+			return `File: ${filePath} (${lines.length} lines):\n` + lines.map((l, i) => `${i + 1}: ${l}`).join('\n');
+		} catch (e: any) {
+			return `Error reading "${filePath}": ${e.message}`;
+		}
+	}
+
+	/**
+	 * Creates or overwrites a file and opens it in an editor tab.
+	 */
+	private async _writeFile(filePath: string, content: string): Promise<string> {
+		const fileUri = this._resolveWorkspaceUri(filePath);
+		if (!fileUri) {
+			return `Error: Could not resolve path "${filePath}" in workspace.`;
+		}
+		try {
+			await this._fileService.writeFile(fileUri, VSBuffer.fromString(content));
+			try {
+				await this._editorService.openEditor({ resource: fileUri });
+			} catch {}
+			const lines = content.split('\n').length;
+			return `Successfully created/updated "${filePath}" (${lines} lines). Opened in editor.`;
+		} catch (e: any) {
+			return `Error writing "${filePath}": ${e.message}`;
+		}
+	}
+
+	/**
+	 * Surgically replaces a search block with a replacement block in an existing file.
+	 */
+	private async _editFile(filePath: string, search: string, replace: string): Promise<string> {
+		const fileUri = this._resolveWorkspaceUri(filePath);
+		if (!fileUri) {
+			return `Error: Could not resolve path "${filePath}" in workspace.`;
+		}
+		try {
+			const exists = await this._fileService.exists(fileUri);
+			if (!exists) {
+				return `Error: File "${filePath}" does not exist.`;
+			}
+			const existingContent = (await this._fileService.readFile(fileUri)).value.toString();
+			if (!existingContent.includes(search)) {
+				return `Error: Search block not found in "${filePath}". Verify whitespace and line endings.`;
+			}
+			const patched = existingContent.replace(search, replace);
+			await this._fileService.writeFile(fileUri, VSBuffer.fromString(patched));
+			try {
+				await this._editorService.openEditor({ resource: fileUri });
+			} catch {}
+			return `Successfully applied surgical edit to "${filePath}".`;
+		} catch (e: any) {
+			return `Error editing "${filePath}": ${e.message}`;
+		}
+	}
+
+	/**
+	 * Lists directory contents with metadata.
+	 */
+	private async _listDir(dirPath?: string): Promise<string> {
+		const uri = dirPath ? this._resolveWorkspaceUri(dirPath) : this._workspaceContextService.getWorkspace().folders[0]?.uri;
+		if (!uri) {
+			return 'Error: No workspace folder opened.';
+		}
+		try {
+			const stat = await this._fileService.resolve(uri, { resolveMetadata: true });
+			if (!stat.isDirectory || !stat.children) {
+				return `Path "${dirPath || '.'}" is not a directory.`;
+			}
+			const items: string[] = [];
+			for (const child of stat.children) {
+				const isDir = child.isDirectory;
+				const size = child.size !== undefined ? ` (${child.size} bytes)` : '';
+				items.push(`${isDir ? '[DIR] ' : '[FILE]'} ${child.name}${size}`);
+			}
+			return `Directory listing of "${dirPath || '.'}" (${items.length} items):\n` + items.join('\n');
+		} catch (e: any) {
+			return `Error listing "${dirPath || '.'}": ${e.message}`;
+		}
+	}
+
+	/**
+	 * Searches workspace files for query string or regex.
+	 */
+	private async _grepSearch(query: string, searchPath?: string): Promise<string> {
+		const rootUri = searchPath ? this._resolveWorkspaceUri(searchPath) : this._workspaceContextService.getWorkspace().folders[0]?.uri;
+		if (!rootUri) {
+			return 'Error: No workspace folder opened.';
+		}
+		try {
+			const matches: string[] = [];
+			const traverse = async (uri: URI, depth: number) => {
+				if (depth > 6 || matches.length >= 35) return;
+				const stat = await this._fileService.resolve(uri);
+				if (!stat.children) return;
+				for (const child of stat.children) {
+					if (['node_modules', '.git', 'out', '.build', 'dist', '.vscode-test'].includes(child.name)) {
+						continue;
+					}
+					if (child.isDirectory) {
+						await traverse(child.resource, depth + 1);
+					} else if (child.size && child.size < 150000) {
+						try {
+							const content = (await this._fileService.readFile(child.resource)).value.toString();
+							if (content.toLowerCase().includes(query.toLowerCase())) {
+								const lines = content.split('\n');
+								for (let i = 0; i < lines.length; i++) {
+									if (lines[i].toLowerCase().includes(query.toLowerCase())) {
+										matches.push(`${child.name}:${i + 1}: ${lines[i].trim()}`);
+										if (matches.length >= 35) break;
+									}
+								}
+							}
+						} catch {}
+					}
+				}
+			};
+			await traverse(rootUri, 0);
+			if (matches.length === 0) {
+				return `No matches found for "${query}".`;
+			}
+			return `Found ${matches.length} matches for "${query}":\n` + matches.join('\n');
+		} catch (e: any) {
+			return `Error during search: ${e.message}`;
+		}
+	}
+
+	/**
+	 * Performs a live web search using DuckDuckGo to find documentation, tutorials, and answers.
+	 */
+	private async _webSearch(query: string, token: CancellationToken): Promise<string> {
+		if (!query || !query.trim()) {
+			return 'Error: No query provided to web_search.';
+		}
+		try {
+			const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+				headers: {
+					'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+				}
+			});
+			if (!res.ok) {
+				return `Search failed with status ${res.status}: ${res.statusText}`;
+			}
+			const html = await res.text();
+			const linkRegex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+			const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+
+			const links: { title: string; url: string }[] = [];
+			let lm: RegExpExecArray | null;
+			while ((lm = linkRegex.exec(html)) !== null && links.length < 6) {
+				let rawUrl = lm[1];
+				if (rawUrl.includes('uddg=')) {
+					const match = rawUrl.match(/uddg=([^&]+)/);
+					if (match) {
+						try { rawUrl = decodeURIComponent(match[1]); } catch {}
+					}
+				}
+				links.push({
+					title: lm[2].replace(/<[^>]+>/g, '').trim(),
+					url: rawUrl
+				});
+			}
+
+			const snippets: string[] = [];
+			let sm: RegExpExecArray | null;
+			while ((sm = snippetRegex.exec(html)) !== null && snippets.length < 6) {
+				snippets.push(sm[1].replace(/<[^>]+>/g, '').trim());
+			}
+
+			if (links.length === 0) {
+				return `No web results found for "${query}".`;
+			}
+
+			const formatted: string[] = [`Web Search Results for "${query}":\n`];
+			for (let i = 0; i < links.length; i++) {
+				formatted.push(`[${i + 1}] ${links[i].title}\nURL: ${links[i].url}\nSummary: ${snippets[i] || 'No snippet available.'}\n`);
+			}
+			return formatted.join('\n');
+		} catch (e: any) {
+			return `Web search error: ${e.message}`;
+		}
+	}
+
+	/**
+	 * Fetches and reads a web page, stripping markup and returning readable text.
+	 */
+	private async _fetchWebPage(url: string, token: CancellationToken): Promise<string> {
+		if (!url || !url.trim()) {
+			return 'Error: No URL provided to fetch_web_page.';
+		}
+		try {
+			const res = await fetch(url, {
+				headers: {
+					'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+				}
+			});
+			if (!res.ok) {
+				return `Failed to fetch URL ${url}: ${res.status} ${res.statusText}`;
+			}
+			const html = await res.text();
+			const clean = html
+				.replace(/<script[\s\S]*?<\/script>/gi, '')
+				.replace(/<style[\s\S]*?<\/style>/gi, '')
+				.replace(/<nav[\s\S]*?<\/nav>/gi, '')
+				.replace(/<footer[\s\S]*?<\/footer>/gi, '')
+				.replace(/<header[\s\S]*?<\/header>/gi, '')
+				.replace(/<[^>]+>/g, ' ')
+				.replace(/&nbsp;/g, ' ')
+				.replace(/&amp;/g, '&')
+				.replace(/&lt;/g, '<')
+				.replace(/&gt;/g, '>')
+				.replace(/&#39;/g, "'")
+				.replace(/&quot;/g, '"')
+				.replace(/\s+/g, ' ')
+				.trim();
+
+			if (!clean) {
+				return `(Fetched page ${url} but no readable text was extracted)`;
+			}
+			return `Page content for ${url} (first 5000 characters):\n${clean.slice(0, 5000)}`;
+		} catch (e: any) {
+			return `Error fetching web page "${url}": ${e.message}`;
+		}
+	}
+
+	// ==========================================================
+	// 6. TOOL PARSING & PASSIVE ACTION HANDLERS
+	// ==========================================================
+
+	/**
+	 * Universal Tool Call Extractor: parses XML, JSON, bracket, and script blocks.
+	 */
+	private _extractToolCalls(text: string): IExtractedToolCall[] {
+		const toolCalls: IExtractedToolCall[] = [];
+
+		// 1. XML style: <tool_call> ... </tool_call>
+		const xmlRegex = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
+		let xmlMatch: RegExpExecArray | null;
+		while ((xmlMatch = xmlRegex.exec(text)) !== null) {
+			const raw = xmlMatch[1].trim();
+			try {
+				const parsed = JSON.parse(raw);
+				if (parsed.name) {
+					toolCalls.push({ name: parsed.name, args: parsed.arguments || parsed.args || {}, raw: xmlMatch[0] });
+					continue;
+				}
+			} catch {}
+
+			// Sub-tags: <name>...</name> and <arguments>...</arguments>
+			const nameMatch = raw.match(/<name>(.*?)<\/name>/i);
+			const argsMatch = raw.match(/<arguments>([\s\S]*?)<\/arguments>/i);
+			if (nameMatch) {
+				let parsedArgs = {};
+				if (argsMatch) {
+					try { parsedArgs = JSON.parse(argsMatch[1]); } catch {}
+				}
+				toolCalls.push({ name: nameMatch[1].trim(), args: parsedArgs, raw: xmlMatch[0] });
+			}
+		}
+
+		// 2. Markdown tool block: ```tool:name ... ```
+		const toolBlockRegex = /```tool:([a-zA-Z0-9_\-]+)\s*\n([\s\S]*?)```/gi;
+		let tbMatch: RegExpExecArray | null;
+		while ((tbMatch = toolBlockRegex.exec(text)) !== null) {
+			const name = tbMatch[1].trim();
+			let args = {};
+			try { args = JSON.parse(tbMatch[2].trim()); } catch {}
+			toolCalls.push({ name, args, raw: tbMatch[0] });
+		}
+
+		// 3. Bracket format: [run_command(command="...")] or [web_search(query="...")] or [fetch_web_page(url="...")]
+		const bracketRegex = /\[(run_command|run_in_terminal|execute_command|read_file|write_file|edit_file|list_dir|grep_search|web_search|search_web|fetch_web_page|read_url|fetch_page)\s*\(\s*(?:command|cmd|path|query|url)?\s*=?\s*['"]?([^'")\]]+)['"]?\s*\)\]/gi;
+		let brMatch: RegExpExecArray | null;
+		while ((brMatch = bracketRegex.exec(text)) !== null) {
+			const name = brMatch[1];
+			const val = brMatch[2];
+			const argKey = (name.includes('command') || name.includes('terminal'))
+				? 'command'
+				: (name.includes('file') || name.includes('dir'))
+				? 'path'
+				: (name.includes('search') || name.includes('query'))
+				? 'query'
+				: 'url';
+			toolCalls.push({ name, args: { [argKey]: val }, raw: brMatch[0] });
+		}
+
+		// 4. Executable script block: ```bash:run ... ```
+		const runCodeBlockRegex = /```(?:bash|sh|powershell|cmd):run\s*\n([\s\S]*?)```/gi;
+		let rcbMatch: RegExpExecArray | null;
+		while ((rcbMatch = runCodeBlockRegex.exec(text)) !== null) {
+			if (rcbMatch[1] && rcbMatch[1].trim()) {
+				toolCalls.push({ name: 'run_command', args: { command: rcbMatch[1].trim() }, raw: rcbMatch[0] });
+			}
+		}
+
+		return toolCalls;
+	}
+
+	/**
+	 * Handles passive code creation and surgical editing in final assistant messages.
+	 */
+	private async _handlePassiveCodeBlocks(fullContent: string, progress: (parts: IChatProgress[]) => void, token: CancellationToken): Promise<void> {
+		// A. Surgical Search/Replace Blocks
+		const patchRegex = /(?:###?\s*`?([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)`?[\s\S]*?)?<{7}\s*SEARCH\s*\n([\s\S]*?)\n={7}\s*\n([\s\S]*?)\n>{7}/gi;
+		let patchMatch: RegExpExecArray | null;
+		while ((patchMatch = patchRegex.exec(fullContent)) !== null) {
+			let targetFile = (patchMatch[1] || '').trim();
+			if (!targetFile) {
+				const activeEditor = this._codeEditorService.getActiveCodeEditor();
+				if (activeEditor?.getModel()) {
+					targetFile = basename(activeEditor.getModel()!.uri);
+				}
+			}
+			if (targetFile) {
+				const result = await this._editFile(targetFile, patchMatch[2], patchMatch[3]);
+				progress([{ kind: 'markdownContent', content: new MarkdownString(`\n\n> ✏️ **${result}**\n\n`) }]);
+			}
+		}
+
+		// B. Full File Generation Blocks
+		const codeBlockRegex = /```([a-zA-Z0-9_\-]*)(?:[:\s]+([a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+))\s*\n([\s\S]*?)```/g;
+		let cbMatch: RegExpExecArray | null;
+		while ((cbMatch = codeBlockRegex.exec(fullContent)) !== null) {
+			const fileName = (cbMatch[2] || '').trim();
+			const code = cbMatch[3];
+			if (fileName && code) {
+				const result = await this._writeFile(fileName, code);
+				progress([{ kind: 'markdownContent', content: new MarkdownString(`\n\n> 📄 **${result}**\n\n`) }]);
+			}
+		}
+	}
+
+	/**
+	 * Resolves a relative workspace path to an absolute URI.
+	 */
+	private _resolveWorkspaceUri(targetPath: string): URI | null {
+		const workspaceFolders = this._workspaceContextService.getWorkspace().folders;
+		const primaryFolder = workspaceFolders[0];
+		if (!primaryFolder) return null;
+		let clean = (targetPath || '').trim().replace(/^['"]|['"]$/g, '');
+		if (clean.startsWith('/tmp/')) clean = clean.slice(5);
+		else if (clean.startsWith('tmp/')) clean = clean.slice(4);
+		clean = clean.replace(/^[/\\]+/, '').replace(/\\/g, '/');
+		return joinPath(primaryFolder.uri, clean);
 	}
 }

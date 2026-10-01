@@ -108,3 +108,63 @@ Ares IDE does not rely on any external extension folder or extension host IPC br
   1. Updated `aresAiAgent.ts` to pass `content: new MarkdownString(...)` with `shimmer: true`.
   2. Guarded `ChatProgressContentPart` constructor and `tryUpdateProgress` with defensive fallback `progress.content ?? (progress as any).message ?? new MarkdownString('')`.
 - **Verification**: Verified with `scripts/test-chat-progress.mjs` and clean transpile (`transpile-client` 0 errors).
+
+---
+
+## 8. Autonomous Agent ReAct Loop & Native Tool Suite (Antigravity-Grade)
+- **Status**: Implemented, verified locally with automated test suites, transpiled cleanly (`transpile-client` 0 errors).
+- **Core Enhancements**:
+  1. **Multi-Step ReAct Loop**: Up to 10 autonomous iterations per prompt. The model can call a tool, inspect stdout/stderr or file contents, reason about the results, and continue taking actions until the goal is achieved.
+  2. **Live Terminal Execution & Output Streaming (`run_command`)**: Runs directly in the user's active VS Code terminal, monitors output streams via `terminal.onData`, and captures ANSI-stripped stdout/stderr back into the model context.
+  3. **Full Tool Suite**:
+     - `run_command`: Terminal command execution with live feedback.
+     - `read_file`: Line-sliced file inspection.
+     - `write_file`: File creation with editor tab reveal.
+     - `edit_file`: Surgical search-and-replace patching.
+     - `list_dir`: Directory exploration.
+     - `grep_search`: Workspace text and regex search.
+  4. **Universal Tool Extractor**: Supports XML `<tool_call>`, markdown ````tool:<name>````, bracket syntax, `bash:run`, and search/replace blocks.
+- **Verification Scripts**:
+  - `scripts/test-agent-tools.mjs`: PASS
+  - `scripts/test-agent-react-loop.mjs`: PASS
+- **GitHub Sync**: Strictly preserved locally without pushing to GitHub per user instruction.
+
+---
+
+## 9. Live Internet Access (Web Search & Web Page Reader)
+- **Status**: Implemented, verified with live network tests, transpiled cleanly (`transpile-client` 0 errors).
+- **Core Enhancements**:
+  1. **`web_search`**:
+     - Connects to DuckDuckGo search endpoint without requiring any external API keys or tokens.
+     - Automatically unpacks redirects and extracts search result titles, URLs, and summaries.
+     - Feeds structured citations into the autonomous model loop.
+  2. **`fetch_web_page`**:
+     - Fetches any public URL, documentation page, or GitHub raw file using native standard `fetch`.
+     - Strips markup tags (`<script>`, `<style>`, `<nav>`, `<footer>`) and normalizes HTML entities into clean markdown.
+  3. **Universal Tool Call Support**:
+     - Supports `<tool_call>{"name": "web_search", "arguments": {"query": "..."}}</tool_call>`, `[web_search(query="...")]`, and `[fetch_web_page(url="...")]`.
+- **Verification Scripts**:
+  - `scripts/test-web-search.mjs`: PASS (Retrieved live electron documentation from `electronjs.org`)
+  - `scripts/test-agent-tools.mjs`: PASS (All 6 tool call formats verified)
+- **GitHub Sync**: Strictly preserved locally without pushing to GitHub per user instruction.
+
+---
+
+## 10. Headless Background Shell & In-Chat Console Stream (Antigravity-Style)
+- **Status**: Implemented, verified, transpiled cleanly (`transpile-client` 0 errors).
+- **Core Enhancements**:
+  1. **Zero IDE Terminal Panel Popups**:
+     - Eliminated calls to `revealTerminal()`, which previously popped open the bottom panel dock in the IDE and stole focus.
+     - Terminal commands now execute in a dedicated, hidden background shell (`hideFromUser: true`, `isFeatureTerminal: true`) routed to `_backgroundedTerminalInstances`.
+     - The user's visible terminal tabs and active work remain completely undisturbed.
+  2. **In-Chat Console Rendering**:
+     - Command execution and real stdout/stderr output stream directly inside the chat response as formatted console blocks:
+       ```console
+       $ <command>
+       <output>
+       ```
+     - Other tool executions (`web_search`, `read_file`, `write_file`, `edit_file`, `list_dir`, `grep_search`) now display dedicated badges and formatted snippets right in the chat message.
+  3. **Output Cleaning**:
+     - Uses `removeAnsiEscapeCodes` to strip terminal control codes and removes echo headers so output is clean and readable.
+- **GitHub Sync**: Strictly preserved locally without pushing to GitHub per user instruction.
+
