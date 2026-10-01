@@ -68,7 +68,8 @@ export class AresAiAgent implements IChatAgentImplementation {
 
 		progress([{
 			kind: 'progressMessage',
-			message: new MarkdownString(`Thinking with ${providerName} (${modelId})...`)
+			content: new MarkdownString(`Thinking with ${providerName} (${modelId})...`),
+			shimmer: true
 		}]);
 
 		// Handle Slash Commands

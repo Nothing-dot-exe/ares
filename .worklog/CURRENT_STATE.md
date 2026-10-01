@@ -99,3 +99,12 @@ Ares IDE does not rely on any external extension folder or extension host IPC br
   - Live CDP verification confirms: `hasChatView: true`, `hasInputPart: true`, `hasEditor: true`, `hasTextarea: true`, `chatViewRect: { w: 289, h: 875 }`.
   - Chat model selection successfully initialized with all native models available and active.
 
+---
+
+## 7. Transient Chat Render Error Fix (`reading 'value'`)
+- **Issue**: Sending any chat message rendered a brief error box: `Failed to render content: Cannot read properties of undefined (reading 'value')` before the model output completed.
+- **Root Cause**: In `aresAiAgent.ts`, `progress([{ kind: 'progressMessage', message: new MarkdownString(...) }])` was used. `IChatProgressMessage` expects `content: IMarkdownString`. As a result, `progress.content` was `undefined`, and `ChatProgressContentPart` crashed calling `markdownRenderer.render(progress.content)`.
+- **Resolution**:
+  1. Updated `aresAiAgent.ts` to pass `content: new MarkdownString(...)` with `shimmer: true`.
+  2. Guarded `ChatProgressContentPart` constructor and `tryUpdateProgress` with defensive fallback `progress.content ?? (progress as any).message ?? new MarkdownString('')`.
+- **Verification**: Verified with `scripts/test-chat-progress.mjs` and clean transpile (`transpile-client` 0 errors).

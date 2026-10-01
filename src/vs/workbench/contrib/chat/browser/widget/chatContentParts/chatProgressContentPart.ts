@@ -66,7 +66,7 @@ export class ChatProgressContentPart extends Disposable implements IChatContentP
 		@IConfigurationService private readonly configurationService: IConfigurationService
 	) {
 		super();
-		this.currentContent = progress.content;
+		this.currentContent = progress.content ?? (progress as any).message ?? new MarkdownString('');
 		this.progressId = hasKey(progress, { kind: true }) && progress.kind === 'progressMessage' ? progress.id : undefined;
 		this.progressAction = context.progressMessageAction;
 		this.persistentProgress = !!context.suppressProgressShimmer;
@@ -82,7 +82,7 @@ export class ChatProgressContentPart extends Disposable implements IChatContentP
 
 		if (this.showSpinner && this.configurationService.getValue(AccessibilityWorkbenchSettingId.VerboseChatProgressUpdates)) {
 			// this step is in progress, communicate it to SR users
-			alert(stripIcons(renderAsPlaintext(progress.content)));
+			alert(stripIcons(renderAsPlaintext(this.currentContent)));
 		}
 		const isLoadingIcon = !!icon && ThemeIcon.isEqual(icon, ThemeIcon.modify(Codicon.loading, 'spin'));
 		// Even if callers request shimmer, only the active (spinner-visible) progress row should animate.
@@ -95,7 +95,7 @@ export class ChatProgressContentPart extends Disposable implements IChatContentP
 		const progressIcon = this.useShimmer && !(isWorkingProgress && this.persistentProgress)
 			? Codicon.check
 			: (icon ?? fallbackIcon);
-		const result = this.chatContentMarkdownRenderer.render(progress.content);
+		const result = this.chatContentMarkdownRenderer.render(this.currentContent);
 		result.element.classList.add('progress-step');
 		renderFileWidgets(result.element, this.instantiationService, this.chatMarkdownAnchorService, this._fileWidgetStore);
 		if (this.useShimmer) {
@@ -133,11 +133,12 @@ export class ChatProgressContentPart extends Disposable implements IChatContentP
 			|| shouldShowSpinner(followingContent, element) !== this.showSpinner) {
 			return false;
 		}
-		if (this.showSpinner && progress.content.value !== this.currentContent.value
+		const updateContent = progress.content ?? (progress as any).message ?? new MarkdownString('');
+		if (this.showSpinner && updateContent.value !== this.currentContent?.value
 			&& this.configurationService.getValue(AccessibilityWorkbenchSettingId.VerboseChatProgressUpdates)) {
-			alert(stripIcons(renderAsPlaintext(progress.content)));
+			alert(stripIcons(renderAsPlaintext(updateContent)));
 		}
-		this.updateMessage(progress.content);
+		this.updateMessage(updateContent);
 		return true;
 	}
 
